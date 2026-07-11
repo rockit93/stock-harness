@@ -12,6 +12,11 @@ export class QuantController {
     return this.pythonCore.strategies();
   }
 
+  @Post("bars")
+  bars(@Body() body: unknown) {
+    return this.pythonCore.bars(body);
+  }
+
   @Post("backtest")
   backtest(@Body() body: unknown) {
     return this.pythonCore.backtest(body);

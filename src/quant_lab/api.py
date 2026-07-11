@@ -14,15 +14,18 @@ from .strategies import STRATEGIES
 app = FastAPI(title="stock-harness Python Core", version="0.1.0")
 
 
-class BacktestRequest(BaseModel):
+class BarsRequest(BaseModel):
     market: Market = Market.A_SHARE
     symbol: str = "600519"
-    start: date = date(2020, 1, 1)
+    start: date
     end: date
     adjust: str = "qfq"
     data_source: DataSource = DataSource.AUTO
     futu_host: str = "127.0.0.1"
     futu_port: int = 11111
+
+
+class BacktestRequest(BarsRequest):
     strategy: str = "ma_cross"
     strategy_params: dict[str, Any] = Field(default_factory=dict)
     cash: float = 100000.0
@@ -58,6 +61,28 @@ def strategies() -> list[dict[str, Any]]:
     ]
 
 
+@app.post("/bars")
+def bars(request: BarsRequest) -> dict[str, Any]:
+    if request.start >= request.end:
+        raise HTTPException(status_code=400, detail="start must be earlier than end")
+
+    try:
+        frame = load_daily_bars(
+            market=request.market,
+            symbol=request.symbol,
+            start=request.start,
+            end=request.end,
+            adjust="" if request.adjust == "none" else request.adjust,
+            data_source=request.data_source,
+            futu_host=request.futu_host,
+            futu_port=request.futu_port,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {"bars": _frame_payload(frame)}
+
+
 @app.post("/backtest")
 def backtest(request: BacktestRequest) -> dict[str, Any]:
     if request.start >= request.end:
@@ -71,7 +96,7 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
     params.update(request.strategy_params)
 
     try:
-        bars = load_daily_bars(
+        frame = load_daily_bars(
             market=request.market,
             symbol=request.symbol,
             start=request.start,
@@ -82,7 +107,7 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
             futu_port=request.futu_port,
         )
         result = run_backtest(
-            bars=bars,
+            bars=frame,
             strategy_spec=spec,
             strategy_params=params,
             cash=request.cash,
@@ -96,6 +121,6 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
         "equity": _series_payload(result.equity),
         "benchmark_equity": _series_payload(result.benchmark_equity),
         "drawdown": _series_payload(result.drawdown),
-        "bars": _frame_payload(bars),
+        "bars": _frame_payload(frame),
         "trades": result.trades.to_dict(orient="records"),
     }

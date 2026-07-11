@@ -12,6 +12,10 @@ export class PythonCoreService {
     return this.request("/strategies");
   }
 
+  bars(body: unknown) {
+    return this.request("/bars", { method: "POST", body });
+  }
+
   backtest(body: unknown) {
     return this.request("/backtest", { method: "POST", body });
   }
