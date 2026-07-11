@@ -82,6 +82,22 @@ label {
   color: #334155;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-row input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
+.checkbox-row span {
+  line-height: 1.4;
+}
+
 input,
 select,
 button,

@@ -37,9 +37,9 @@ function startForRange(range) {
 createApp({
   data() {
     return {
-      token: localStorage.getItem("stock-harness-token") ?? "",
+      token: localStorage.getItem("stock-harness-token") ?? sessionStorage.getItem("stock-harness-token") ?? "",
       authMode: "login",
-      auth: { username: "admin", password: "" },
+      auth: { username: "admin", password: "", rememberMe: true },
       currentUser: null,
       activeModule: "dashboard",
       loading: false,
@@ -131,7 +131,13 @@ createApp({
         });
         this.token = payload.token;
         this.currentUser = payload.user;
-        localStorage.setItem("stock-harness-token", this.token);
+        if (this.auth.rememberMe) {
+          localStorage.setItem("stock-harness-token", this.token);
+          sessionStorage.removeItem("stock-harness-token");
+        } else {
+          sessionStorage.setItem("stock-harness-token", this.token);
+          localStorage.removeItem("stock-harness-token");
+        }
         await Promise.all([this.loadStrategies(), this.loadSubscriptions(), this.loadRoles()]);
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error);
@@ -151,6 +157,7 @@ createApp({
       this.roles = [];
       this.result = null;
       localStorage.removeItem("stock-harness-token");
+      sessionStorage.removeItem("stock-harness-token");
     },
     async loadStrategies() {
       this.strategies = await this.api("/strategies");
@@ -353,6 +360,10 @@ createApp({
         <p>登录后访问本地量化助手。</p>
         <label>用户名<input v-model.trim="auth.username" autocomplete="username" /></label>
         <label>密码<input v-model="auth.password" type="password" autocomplete="current-password" /></label>
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="auth.rememberMe" />
+          <span>记住登录状态，30 天内自动登录</span>
+        </label>
         <button :disabled="authLoading">{{ authLoading ? "处理中..." : (authMode === "login" ? "登录" : "注册") }}</button>
         <button class="ghost" type="button" @click="authMode = authMode === 'login' ? 'register' : 'login'">
           {{ authMode === "login" ? "没有账号？去注册" : "已有账号？去登录" }}

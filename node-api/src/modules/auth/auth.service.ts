@@ -12,7 +12,8 @@ export type JwtPayload = {
 @Injectable()
 export class AuthService {
   private readonly jwtSecret = process.env.JWT_SECRET ?? "dev-only-change-me";
-  private readonly tokenTtlSeconds = Number(process.env.TOKEN_TTL_SECONDS ?? 60 * 60 * 12);
+  private readonly sessionTokenTtlSeconds = Number(process.env.TOKEN_TTL_SECONDS ?? 60 * 60 * 12);
+  private readonly rememberTokenTtlSeconds = 60 * 60 * 24 * 30;
 
   constructor(@Inject(SqliteUserRepository) private readonly users: SqliteUserRepository) {
     if (this.jwtSecret === "dev-only-change-me") {
@@ -20,7 +21,7 @@ export class AuthService {
     }
   }
 
-  register(usernameInput?: string, passwordInput?: string) {
+  register(usernameInput?: string, passwordInput?: string, rememberMe = false) {
     const { username, password } = this.normalizeAuthBody(usernameInput, passwordInput);
     const existing = this.users.findByUsername(username);
     if (existing) {
@@ -30,12 +31,13 @@ export class AuthService {
     const { passwordHash, salt } = this.hashPassword(password);
     const user = this.users.create(username, passwordHash, salt);
     return {
-      token: this.signToken({ sub: String(user.id), username: user.username }),
+      token: this.signToken({ sub: String(user.id), username: user.username }, rememberMe),
+      expiresIn: rememberMe ? this.rememberTokenTtlSeconds : this.sessionTokenTtlSeconds,
       user: { id: user.id, username: user.username },
     };
   }
 
-  login(usernameInput?: string, passwordInput?: string) {
+  login(usernameInput?: string, passwordInput?: string, rememberMe = false) {
     const { username, password } = this.normalizeAuthBody(usernameInput, passwordInput);
     const user = this.users.findByUsername(username);
     if (!user) {
@@ -48,7 +50,8 @@ export class AuthService {
     }
 
     return {
-      token: this.signToken({ sub: String(user.id), username: user.username }),
+      token: this.signToken({ sub: String(user.id), username: user.username }, rememberMe),
+      expiresIn: rememberMe ? this.rememberTokenTtlSeconds : this.sessionTokenTtlSeconds,
       user: { id: user.id, username: user.username },
     };
   }
@@ -85,12 +88,12 @@ export class AuthService {
     return { username, password };
   }
 
-  private signToken(payload: Pick<JwtPayload, "sub" | "username">) {
+  private signToken(payload: Pick<JwtPayload, "sub" | "username">, rememberMe: boolean) {
     const now = Math.floor(Date.now() / 1000);
     const fullPayload: JwtPayload = {
       ...payload,
       iat: now,
-      exp: now + this.tokenTtlSeconds,
+      exp: now + (rememberMe ? this.rememberTokenTtlSeconds : this.sessionTokenTtlSeconds),
     };
     const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
     const body = Buffer.from(JSON.stringify(fullPayload)).toString("base64url");

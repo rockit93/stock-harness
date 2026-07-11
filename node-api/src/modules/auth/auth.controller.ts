@@ -5,6 +5,7 @@ import { AuthGuard, AuthenticatedRequest } from "./auth.guard";
 type AuthBody = {
   username?: string;
   password?: string;
+  rememberMe?: boolean;
 };
 
 @Controller("auth")
@@ -13,12 +14,12 @@ export class AuthController {
 
   @Post("register")
   register(@Body() body: AuthBody) {
-    return this.auth.register(body.username, body.password);
+    return this.auth.register(body.username, body.password, Boolean(body.rememberMe));
   }
 
   @Post("login")
   login(@Body() body: AuthBody) {
-    return this.auth.login(body.username, body.password);
+    return this.auth.login(body.username, body.password, Boolean(body.rememberMe));
   }
 
   @UseGuards(AuthGuard)
