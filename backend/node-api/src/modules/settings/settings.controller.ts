@@ -1,4 +1,4 @@
-import { BadGatewayException, Body, Controller, Get, Inject, Post, Put, Req, UseGuards } from "@nestjs/common";
+import { BadGatewayException, Body, Controller, Delete, Get, Inject, Param, Post, Put, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
 import { SettingsRepository, DataSourceSettings, ModelSettings } from "./settings.repository";
 
@@ -52,6 +52,33 @@ export class SettingsController {
     return this.settings.getModel(Number(req.user.sub));
   }
 
+  @Get("models")
+  listModels(@Req() req: AuthenticatedRequest) { return this.settings.listModels(Number(req.user.sub)); }
+
+  @Post("models")
+  saveModelEntry(@Req() req: AuthenticatedRequest, @Body() body: Partial<ModelSettings>) { return this.settings.saveModelEntry(Number(req.user.sub), body); }
+
+  @Post("models/test-connection")
+  async testModelEntry(@Req() req: AuthenticatedRequest, @Body() body: Partial<ModelSettings>) {
+    const entry = this.settings.saveModelEntry(Number(req.user.sub), body);
+    return entry.provider === "ollama" ? this.testOllama(entry) : this.testOpenAi(entry);
+  }
+
+  @Put("models/:id")
+  updateModelEntry(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: Partial<ModelSettings>) { return this.settings.saveModelEntry(Number(req.user.sub), { ...body, id: Number(id) }); }
+
+  @Delete("models/:id")
+  deleteModelEntry(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.settings.deleteModel(Number(req.user.sub), Number(id)); }
+
+  @Get("model/available")
+  async getAvailableModels(@Req() req: AuthenticatedRequest) {
+    const settings = this.settings.getModel(Number(req.user.sub));
+    if (settings.provider !== "ollama") {
+      return { provider: settings.provider, models: [settings.model].filter(Boolean) };
+    }
+    return { provider: settings.provider, models: await this.listOllamaModels(settings) };
+  }
+
   @Put("model")
   saveModel(@Req() req: AuthenticatedRequest, @Body() body: Partial<ModelSettings>) {
     return this.settings.saveModel(Number(req.user.sub), body);
@@ -89,6 +116,35 @@ export class SettingsController {
           pullCommand: `ollama pull ${settings.model}`,
         },
       };
+    } catch (error) {
+      if (error instanceof BadGatewayException) throw error;
+      throw new BadGatewayException(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async testOpenAi(settings: ModelSettings) {
+    const apiKey = settings.apiKeyRef ? process.env[settings.apiKeyRef] : "";
+    if (!apiKey) throw new BadGatewayException(`未找到 API Key 环境变量：${settings.apiKeyRef || "未配置"}`);
+    try {
+      const response = await fetch(`${settings.baseUrl.replace(/\/$/, "")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
+      const payload = await response.json().catch(() => ({})) as any;
+      if (!response.ok) throw new BadGatewayException(payload.error?.message ?? `HTTP ${response.status}`);
+      return { ok: true, message: `OpenAI 兼容接口已连接，模型配置 ${settings.name} 可用。`, detail: { provider: settings.provider, model: settings.model } };
+    } catch (error) {
+      if (error instanceof BadGatewayException) throw error;
+      throw new BadGatewayException(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async listOllamaModels(settings: ModelSettings) {
+    try {
+      const response = await fetch(`${settings.baseUrl.replace(/\/$/, "")}/api/tags`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new BadGatewayException(payload.error ?? payload.message ?? "Ollama model list failed");
+      }
+      const models = Array.isArray(payload.models) ? payload.models : [];
+      return models.map((item: { name?: string }) => item.name).filter(Boolean);
     } catch (error) {
       if (error instanceof BadGatewayException) throw error;
       throw new BadGatewayException(error instanceof Error ? error.message : String(error));

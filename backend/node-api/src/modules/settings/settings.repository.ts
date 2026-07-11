@@ -12,6 +12,8 @@ export type DataSourceSettings = {
 };
 
 export type ModelSettings = {
+  id: number;
+  name: string;
   provider: "ollama" | "openai";
   model: string;
   baseUrl: string;
@@ -21,6 +23,7 @@ export type ModelSettings = {
   contextBudgetTokens: number;
   reasoningEffort: "low" | "medium" | "high";
   updatedAt: string | null;
+  isDefault?: boolean;
 };
 
 type SettingsRow = {
@@ -73,6 +76,22 @@ export class SettingsRepository {
         reasoning_effort TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS user_models (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key_ref TEXT,
+        temperature REAL NOT NULL,
+        max_output_tokens INTEGER NOT NULL,
+        context_budget_tokens INTEGER NOT NULL,
+        reasoning_effort TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        UNIQUE(user_id, name)
+      );
     `);
   }
 
@@ -121,6 +140,8 @@ export class SettingsRepository {
   }
 
   getModel(userId: number): ModelSettings {
+    const configured = this.listModels(userId);
+    if (configured.length) return configured.find((item) => item.isDefault) ?? configured[0];
     const row = this.db
       .prepare(
         `SELECT user_id, provider, model, base_url, api_key_ref, temperature, max_output_tokens, context_budget_tokens, reasoning_effort, updated_at
@@ -129,6 +150,8 @@ export class SettingsRepository {
       .get(userId) as ModelSettingsRow | undefined;
     if (!row) return this.defaultModelSettings();
     return {
+      id: 0,
+      name: row.model,
       provider: row.provider === "openai" ? "openai" : "ollama",
       model: row.model,
       baseUrl: row.base_url,
@@ -182,7 +205,41 @@ export class SettingsRepository {
       )
       .run(userId, provider, model, baseUrl, apiKeyRef, temperature, maxOutputTokens, contextBudgetTokens, reasoningEffort, updatedAt);
 
-    return { provider, model, baseUrl, apiKeyRef, temperature, maxOutputTokens, contextBudgetTokens, reasoningEffort, updatedAt };
+    return { id: 0, name: model, provider, model, baseUrl, apiKeyRef, temperature, maxOutputTokens, contextBudgetTokens, reasoningEffort, updatedAt, isDefault: true };
+  }
+
+  listModels(userId: number): Array<ModelSettings & { isDefault: boolean }> {
+    const rows = this.db.prepare(`SELECT * FROM user_models WHERE user_id = ? ORDER BY is_default DESC, id`).all(userId) as any[];
+    return rows.map((row) => ({ id: row.id, name: row.name, provider: row.provider === "openai" ? "openai" : "ollama", model: row.model, baseUrl: row.base_url, apiKeyRef: row.api_key_ref, temperature: Number(row.temperature), maxOutputTokens: Number(row.max_output_tokens), contextBudgetTokens: Number(row.context_budget_tokens), reasoningEffort: this.normalizeReasoningEffort(row.reasoning_effort), updatedAt: row.updated_at, isDefault: Boolean(row.is_default) }));
+  }
+
+  getModelById(userId: number, id?: number): ModelSettings & { isDefault?: boolean } {
+    if (!id) return this.getModel(userId);
+    const found = this.listModels(userId).find((item) => item.id === id);
+    if (!found) throw new BadRequestException("模型配置不存在");
+    return found;
+  }
+
+  saveModelEntry(userId: number, body: Partial<ModelSettings> & { isDefault?: boolean }) {
+    const fallback = this.defaultModelSettings();
+    const name = String(body.name ?? body.model ?? "").trim();
+    const model = String(body.model ?? "").trim();
+    const provider = body.provider === "openai" ? "openai" : "ollama";
+    if (!name || !model) throw new BadRequestException("配置名称和模型名称不能为空");
+    const now = new Date().toISOString();
+    if (body.isDefault || !this.listModels(userId).length) this.db.prepare("UPDATE user_models SET is_default = 0 WHERE user_id = ?").run(userId);
+    const values = [name, provider, model, String(body.baseUrl || this.defaultBaseUrl(provider)).trim(), String(body.apiKeyRef ?? "").trim() || null, Number(body.temperature ?? fallback.temperature), Number(body.maxOutputTokens ?? fallback.maxOutputTokens), Number(body.contextBudgetTokens ?? fallback.contextBudgetTokens), this.normalizeReasoningEffort(body.reasoningEffort), body.isDefault || !this.listModels(userId).length ? 1 : 0, now];
+    if (body.id) this.db.prepare(`UPDATE user_models SET name=?,provider=?,model=?,base_url=?,api_key_ref=?,temperature=?,max_output_tokens=?,context_budget_tokens=?,reasoning_effort=?,is_default=?,updated_at=? WHERE user_id=? AND id=?`).run(...values, userId, body.id);
+    else this.db.prepare(`INSERT INTO user_models (name,provider,model,base_url,api_key_ref,temperature,max_output_tokens,context_budget_tokens,reasoning_effort,is_default,updated_at,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(...values, userId);
+    const id = body.id || Number((this.db.prepare("SELECT last_insert_rowid() id").get() as any).id);
+    return this.getModelById(userId, id);
+  }
+
+  deleteModel(userId: number, id: number) {
+    this.db.prepare("DELETE FROM user_models WHERE user_id=? AND id=?").run(userId, id);
+    const models = this.listModels(userId);
+    if (models.length && !models.some((item) => item.isDefault)) this.db.prepare("UPDATE user_models SET is_default=1 WHERE id=?").run(models[0].id);
+    return { ok: true };
   }
 
   private defaultSettings(): DataSourceSettings {
@@ -196,6 +253,8 @@ export class SettingsRepository {
 
   private defaultModelSettings(): ModelSettings {
     return {
+      id: 0,
+      name: "本地 Qwen",
       provider: "ollama",
       model: "qwen2.5-coder:14b",
       baseUrl: "http://127.0.0.1:11434",
@@ -205,6 +264,7 @@ export class SettingsRepository {
       contextBudgetTokens: 32768,
       reasoningEffort: "medium",
       updatedAt: null,
+      isDefault: true,
     };
   }
 

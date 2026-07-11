@@ -1,12 +1,32 @@
 ﻿import { createApp, nextTick } from "vue";
 import { dispose, init } from "klinecharts";
+import { configStore, llmClient, registerProvider } from "@anvaka/vue-llm";
+import "@anvaka/vue-llm/styles/variables.css";
 import MarkdownIt from "markdown-it";
+import { PI_RUNTIME_PROVIDER, PiRuntimeProvider } from "./piLlmProvider.js";
 import { moduleRoutes, router } from "./router.js";
 import "./style.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8787";
 const dashboardCharts = new Map();
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
+registerProvider(PI_RUNTIME_PROVIDER, PiRuntimeProvider);
+
+async function configurePiRuntimeClient(modelSettings) {
+  const config = {
+    id: PI_RUNTIME_PROVIDER,
+    provider: PI_RUNTIME_PROVIDER,
+    name: "Pi Runtime",
+    baseUrl: API_BASE,
+    model: modelSettings.model,
+    temperature: modelSettings.temperature,
+    maxTokens: modelSettings.maxOutputTokens,
+    enabled: true,
+  };
+  configStore.saveConfig(PI_RUNTIME_PROVIDER, config);
+  configStore.setActiveProviderId(PI_RUNTIME_PROVIDER);
+  await llmClient.initialize(config);
+}
 
 function disposeDashboardChart(id) {
   const entry = dashboardCharts.get(id);
@@ -95,6 +115,8 @@ const app = createApp({
         updatedAt: null,
       },
       modelSettings: {
+        id: null,
+        name: "本地 Qwen",
         provider: "ollama",
         model: "qwen2.5-coder:14b",
         baseUrl: "http://127.0.0.1:11434",
@@ -105,6 +127,7 @@ const app = createApp({
         reasoningEffort: "medium",
         updatedAt: null,
       },
+      modelConfigs: [],
       roles: [],
       skills: [],
       plugins: [],
@@ -134,16 +157,21 @@ const app = createApp({
         roleId: "",
         schedule: "manual",
         prompt: "总结订阅股票今天的走势、异常波动和明天观察点。",
+        modelConfigId: "",
       },
       chatForm: {
         roleId: "",
+        model: "",
+        modelConfigId: "",
         message: "帮我分析 600519 最近的走势，并给出可回测的策略假设。",
       },
+      savedTasks: JSON.parse(localStorage.getItem("stock-harness-pi-tasks") || "[]"),
       chatLoading: false,
       chatSessionId: null,
       chatMessages: [],
       chatReply: "",
       chatTrace: null,
+      availableModels: [],
       subscriptions: [],
       subscriptionForm: {
         market: "A Share",
@@ -311,7 +339,21 @@ const app = createApp({
       this.dataSourceSettings = await this.api("/settings/data-source");
     },
     async loadModelSettings() {
-      this.modelSettings = await this.api("/settings/model");
+      this.modelConfigs = await this.api("/settings/models");
+      this.modelSettings = this.modelConfigs.find((item) => item.isDefault) ?? this.modelConfigs[0] ?? await this.api("/settings/model");
+      this.chatForm.modelConfigId ||= this.modelSettings.id || "";
+      this.taskForm.modelConfigId ||= this.modelSettings.id || "";
+      if (!this.chatForm.model) this.chatForm.model = this.modelSettings.model;
+      await this.loadAvailableModels();
+    },
+    async loadAvailableModels() {
+      try {
+        const payload = await this.api("/settings/model/available");
+        const models = Array.isArray(payload.models) ? payload.models : [];
+        this.availableModels = [...new Set([this.modelSettings.model, this.chatForm.model, ...models].filter(Boolean))];
+      } catch {
+        this.availableModels = [this.modelSettings.model].filter(Boolean);
+      }
     },
     async saveDataSourceSettings() {
       this.settingsSaving = true;
@@ -343,10 +385,14 @@ const app = createApp({
       this.settingsMessage = "";
       this.error = "";
       try {
-        this.modelSettings = await this.api("/settings/model", {
-          method: "PUT",
+        this.modelSettings = await this.api(this.modelSettings.id ? `/settings/models/${this.modelSettings.id}` : "/settings/models", {
+          method: this.modelSettings.id ? "PUT" : "POST",
           body: JSON.stringify(this.modelSettings),
         });
+        await this.loadModelSettings();
+        this.chatForm.modelConfigId = this.modelSettings.id;
+        this.chatForm.model = this.modelSettings.model;
+        await this.loadAvailableModels();
         this.settingsMessage = "模型配置已保存。";
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error);
@@ -354,17 +400,30 @@ const app = createApp({
         this.settingsSaving = false;
       }
     },
+    newModelConfig() {
+      this.modelSettings = { id: null, name: "", provider: "openai", model: "glm-4.5", baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKeyRef: "ZHIPU_API_KEY", temperature: 0.2, maxOutputTokens: 4096, contextBudgetTokens: 32768, reasoningEffort: "medium", isDefault: !this.modelConfigs.length };
+    },
+    editModelConfig(config) { this.modelSettings = { ...config }; },
+    async deleteModelConfig(config) {
+      if (!confirm(`删除模型配置“${config.name}”？`)) return;
+      await this.api(`/settings/models/${config.id}`, { method: "DELETE" });
+      await this.loadModelSettings();
+    },
+    selectChatModelConfig() {
+      const config = this.modelConfigs.find((item) => item.id === Number(this.chatForm.modelConfigId));
+      if (config) this.chatForm.model = config.model;
+    },
     async testModelConnection() {
       this.settingsSaving = true;
       this.settingsMessage = "";
       this.error = "";
       try {
-        const payload = await this.api("/settings/model/test-connection", {
+        const payload = await this.api("/settings/models/test-connection", {
           method: "POST",
           body: JSON.stringify(this.modelSettings),
         });
         this.settingsMessage = payload.message ?? "模型连接测试完成。";
-        this.modelSettings = await this.api("/settings/model");
+        await this.loadModelSettings();
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error);
       } finally {
@@ -639,6 +698,18 @@ const app = createApp({
     async loadRoles() {
       this.roles = await this.api("/agent-roles");
     },
+    saveTask() {
+      if (!this.taskForm.name || !this.taskForm.prompt || !this.taskForm.modelConfigId) { this.error = "请填写任务名称、提示词并选择执行模型。"; return; }
+      const model = this.modelConfigs.find((item) => item.id === Number(this.taskForm.modelConfigId));
+      const task = { ...this.taskForm, id: Date.now(), modelName: model?.name ?? model?.model ?? "" };
+      this.savedTasks.unshift(task);
+      localStorage.setItem("stock-harness-pi-tasks", JSON.stringify(this.savedTasks));
+      this.settingsMessage = `任务“${task.name}”已保存。`;
+    },
+    deleteTask(id) {
+      this.savedTasks = this.savedTasks.filter((item) => item.id !== id);
+      localStorage.setItem("stock-harness-pi-tasks", JSON.stringify(this.savedTasks));
+    },
     newChatSession() {
       this.chatSessionId = null;
       this.chatMessages = [];
@@ -653,37 +724,35 @@ const app = createApp({
       this.chatTrace = null;
       this.error = "";
       const userMessage = this.chatForm.message.trim();
+      const selectedModel = this.chatForm.model || this.modelSettings.model;
+      const selectedConfig = this.modelConfigs.find((item) => item.id === Number(this.chatForm.modelConfigId)) ?? this.modelSettings;
       this.chatMessages.push({ role: "user", content: userMessage, roleName: this.chatRoleLabel() });
       try {
-        const response = await fetch(`${API_BASE}/pi/chat`, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-jwt-token": this.token },
-          body: JSON.stringify({
+        await configurePiRuntimeClient({ ...selectedConfig, model: selectedModel });
+        const result = await llmClient.stream(
+          {
+            messages: [{ role: "user", content: userMessage }],
             sessionId: this.chatSessionId,
             roleId: this.chatForm.roleId ? Number(this.chatForm.roleId) : null,
-            message: userMessage,
-          }),
-        });
-        if (!response.ok || !response.body) {
-          const payload = await response.json().catch(() => ({}));
-          throw new Error(payload.detail ?? payload.message ?? `请求失败 (${response.status})`);
+            jwtToken: this.token,
+            model: selectedModel,
+            modelConfigId: selectedConfig.id,
+            temperature: this.modelSettings.temperature,
+            maxTokens: this.modelSettings.maxOutputTokens,
+          },
+          (chunk) => {
+            if (chunk.meta) {
+              this.chatTrace = chunk.meta;
+              this.chatSessionId = chunk.meta.sessionId ?? chunk.meta.conversationId;
+            }
+            this.chatReply = chunk.fullContent ?? this.chatReply;
+          },
+        );
+        const assistantContent = result.content || this.chatReply;
+        if (assistantContent) {
+          this.chatMessages.push({ role: "assistant", content: assistantContent, roleName: this.chatTrace?.role ?? "个人助手" });
         }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          buffer += decoder.decode(value, { stream: !done });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) this.consumeChatEvent(line);
-          if (done) break;
-        }
-        if (buffer.trim()) this.consumeChatEvent(buffer);
-        if (this.chatReply) {
-          this.chatMessages.push({ role: "assistant", content: this.chatReply, roleName: this.chatTrace?.role ?? "个人助手" });
-          this.chatReply = "";
-        }
+        this.chatReply = "";
         this.setComposerText("");
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error);
@@ -1460,6 +1529,12 @@ const app = createApp({
               </div>
               <div ref="chatComposer" class="rich-composer" contenteditable="true" data-placeholder="询问 Pi，或输入 @策略研究员，点击股票标签快速插入..." @input="syncComposer" @keydown.enter.exact.prevent="startChat"></div>
               <div class="composer-actions">
+                <label class="composer-select">模型
+                  <select v-model="chatForm.modelConfigId" title="本轮使用的模型" @change="selectChatModelConfig">
+                    <option v-for="config in modelConfigs" :key="config.id" :value="config.id">{{ config.name }} · {{ config.model }}</option>
+                    <option v-if="!modelConfigs.length" value="">{{ modelSettings.model }}</option>
+                  </select>
+                </label>
                 <select v-model="chatForm.roleId" title="默认角色">
                   <option value="">自动</option>
                   <option v-for="role in roles" :key="role.id" :value="role.id">{{ role.name }}</option>
@@ -1477,7 +1552,7 @@ const app = createApp({
               <p>把常用工作流固定成任务：选择角色、调度方式、任务提示词，后续由 Pi Runtime 执行。</p>
             </div>
           </div>
-          <form class="role-form task-form">
+          <form class="role-form task-form" @submit.prevent="saveTask">
             <label>任务名称<input v-model.trim="taskForm.name" /></label>
             <label>执行角色
               <select v-model="taskForm.roleId">
@@ -1492,9 +1567,21 @@ const app = createApp({
                 <option value="weekly">每周</option>
               </select>
             </label>
+            <label>执行模型
+              <select v-model="taskForm.modelConfigId">
+                <option v-for="config in modelConfigs" :key="config.id" :value="config.id">{{ config.name }} · {{ config.model }}</option>
+                <option v-if="!modelConfigs.length" value="">{{ modelSettings.model }}</option>
+              </select>
+            </label>
             <label>任务提示词<textarea v-model.trim="taskForm.prompt"></textarea></label>
-            <button type="button" disabled>保存任务</button>
+            <button>保存任务</button>
           </form>
+          <div class="card-grid" v-if="savedTasks.length">
+            <article v-for="task in savedTasks" :key="task.id" class="feature-card">
+              <h3>{{ task.name }}</h3><p>{{ task.modelName }} · {{ task.schedule }}</p><p>{{ task.prompt }}</p>
+              <button type="button" class="small danger" @click="deleteTask(task.id)">删除</button>
+            </article>
+          </div>
         </section>
 
         <section v-if="activeModule === 'pi-roles'" class="module-panel">
@@ -1646,13 +1733,18 @@ const app = createApp({
             <p class="hint dark">自动数据源适合不开 Futu OpenD 时使用；Futu OpenD 适合实时行情、订阅推送和交易接口。</p>
           </form>
           <form class="settings-form system-form" @submit.prevent="saveModelSettings">
-            <h3>本地私有化模型</h3>
+            <div class="panel-head"><h3>模型配置</h3><button type="button" class="small" @click="newModelConfig">新增模型</button></div>
+            <div class="role-chip-row" v-if="modelConfigs.length">
+              <button v-for="config in modelConfigs" :key="config.id" type="button" class="role-chip" @click="editModelConfig(config)">{{ config.isDefault ? '默认 · ' : '' }}{{ config.name }}</button>
+            </div>
+            <label>配置名称<input v-model.trim="modelSettings.name" placeholder="如：GLM-4.5 / 本地 Qwen" /></label>
             <label>模型提供方
               <select v-model="modelSettings.provider">
                 <option value="ollama">Ollama 本地模型</option>
-                <option value="openai">OpenAI API</option>
+                <option value="openai">OpenAI 兼容 API（OpenAI / GLM / DeepSeek 等）</option>
               </select>
             </label>
+            <label><input type="checkbox" v-model="modelSettings.isDefault" /> 设为默认模型</label>
             <div class="source-grid">
               <label>模型名称<input v-model.trim="modelSettings.model" placeholder="qwen2.5-coder:14b" /></label>
               <label>Base URL<input v-model.trim="modelSettings.baseUrl" placeholder="http://127.0.0.1:11434" /></label>
@@ -1675,8 +1767,9 @@ const app = createApp({
             <div class="button-row">
               <button :disabled="settingsSaving">{{ settingsSaving ? "保存中..." : "保存模型配置" }}</button>
               <button type="button" class="small" :disabled="settingsSaving" @click="testModelConnection">测试连接</button>
+              <button v-if="modelSettings.id" type="button" class="small danger" @click="deleteModelConfig(modelSettings)">删除</button>
             </div>
-            <p class="hint dark">Ollama 本地模型不需要 API Key；先运行 Ollama，再执行 ollama pull {{ modelSettings.model }}。</p>
+            <p class="hint dark">Ollama 不需要 API Key；GLM 等服务请选择 OpenAI 兼容 API，填写其兼容端点，并把密钥放入所填名称的服务器环境变量。</p>
           </form>
         </section>
       </main>

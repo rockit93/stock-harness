@@ -1190,9 +1190,18 @@ header p {
 
 .composer-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
+}
+
+.composer-select {
+  width: auto;
+  min-width: 220px;
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .composer-actions select {

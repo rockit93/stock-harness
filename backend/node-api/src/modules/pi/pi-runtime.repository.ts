@@ -38,6 +38,7 @@ export class PiRuntimeRepository {
         created_at TEXT NOT NULL
       );
     `);
+    this.ensureNullableConversationRoleId();
     this.ensureColumn("pi_conversations", "role_id", "INTEGER");
     this.ensureColumn("pi_messages", "role_id", "INTEGER");
     this.ensureColumn("pi_messages", "role_name", "TEXT");
@@ -126,5 +127,29 @@ export class PiRuntimeRepository {
     if (!columns.some((item) => item.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
+  }
+
+  private ensureNullableConversationRoleId() {
+    const columns = this.db.prepare("PRAGMA table_info(pi_conversations)").all() as Array<{ name: string; notnull: number }>;
+    const roleColumn = columns.find((item) => item.name === "role_id");
+    if (!roleColumn || roleColumn.notnull === 0) return;
+
+    this.db.exec(`
+      BEGIN TRANSACTION;
+      ALTER TABLE pi_conversations RENAME TO pi_conversations_old;
+      CREATE TABLE pi_conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        role_id INTEGER,
+        model TEXT NOT NULL,
+        title TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO pi_conversations (id, user_id, role_id, model, title, created_at, updated_at)
+      SELECT id, user_id, role_id, model, title, created_at, updated_at FROM pi_conversations_old;
+      DROP TABLE pi_conversations_old;
+      COMMIT;
+    `);
   }
 }
