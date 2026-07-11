@@ -27,8 +27,8 @@ def validate_strategy_definition(definition: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"indicator {name} period must be an integer between 2 and 500")
     for side in ("entry", "exit"):
         group = definition.get(side)
-        if not isinstance(group, dict) or not any(key in group for key in ("all", "any")):
-            raise ValueError(f"strategy_definition.{side} must contain all or any")
+        if not isinstance(group, dict) or sum(key in group for key in ("all", "any")) != 1:
+            raise ValueError(f"strategy_definition.{side} must contain exactly one of all or any")
         for mode in ("all", "any"):
             conditions = group.get(mode, [])
             if not isinstance(conditions, list):
