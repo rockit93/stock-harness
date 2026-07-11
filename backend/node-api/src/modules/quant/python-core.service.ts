@@ -20,6 +20,10 @@ export class PythonCoreService {
     return this.request("/symbols/lookup", { method: "POST", body });
   }
 
+  validateStrategy(definition: unknown) {
+    return this.request("/strategies/validate", { method: "POST", body: { definition } });
+  }
+
   fundamentals(body: unknown) {
     return this.request("/fundamentals", { method: "POST", body });
   }

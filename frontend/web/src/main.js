@@ -1,5 +1,6 @@
 ﻿import { createApp, nextTick } from "vue";
 import { dispose, init } from "klinecharts";
+import { AreaSeries, ColorType, createChart, LineSeries } from "lightweight-charts";
 import { configStore, llmClient, registerProvider } from "@anvaka/vue-llm";
 import "@anvaka/vue-llm/styles/variables.css";
 import MarkdownIt from "markdown-it";
@@ -9,6 +10,7 @@ import "./style.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8787";
 const dashboardCharts = new Map();
+const backtestCharts = [];
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
 registerProvider(PI_RUNTIME_PROVIDER, PiRuntimeProvider);
 
@@ -38,6 +40,38 @@ function disposeDashboardChart(id) {
 
 function disposeDashboardCharts() {
   for (const id of [...dashboardCharts.keys()]) disposeDashboardChart(id);
+}
+
+function disposeBacktestCharts() {
+  while (backtestCharts.length) {
+    const entry = backtestCharts.pop();
+    entry.resizeObserver.disconnect();
+    entry.chart.remove();
+  }
+}
+
+function createBacktestChart(container, priceFormatter) {
+  const chart = createChart(container, {
+    width: container.clientWidth,
+    height: 300,
+    layout: {
+      background: { type: ColorType.Solid, color: "#ffffff" },
+      textColor: "#64748b",
+      fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+    },
+    grid: {
+      vertLines: { color: "#eef2f7" },
+      horzLines: { color: "#eef2f7" },
+    },
+    rightPriceScale: { borderColor: "#e2e8f0" },
+    timeScale: { borderColor: "#e2e8f0", timeVisible: false },
+    crosshair: { vertLine: { labelBackgroundColor: "#334155" }, horzLine: { labelBackgroundColor: "#334155" } },
+    localization: { locale: "zh-CN", priceFormatter },
+  });
+  const resizeObserver = new ResizeObserver(() => chart.applyOptions({ width: container.clientWidth }));
+  resizeObserver.observe(container);
+  backtestCharts.push({ chart, resizeObserver });
+  return chart;
 }
 
 const marketLabels = {
@@ -75,6 +109,13 @@ function isoDate(daysAgo = 0) {
   return date.toISOString().slice(0, 10);
 }
 
+function dateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function startForRange(range) {
   if (range === "day") return isoDate(5);
   if (range === "week") return isoDate(14);
@@ -107,6 +148,21 @@ const app = createApp({
       error: "",
       settingsMessage: "",
       strategies: [],
+      showBacktestStrategyEditor: false,
+      backtestStrategyForm: {
+        id: null,
+        name: "双均线趋势策略",
+        description: "短均线上穿长均线买入，下穿卖出。",
+        definitionText: JSON.stringify({
+          indicators: {
+            fast: { type: "sma", period: 10 },
+            slow: { type: "sma", period: 30 },
+          },
+          entry: { all: [{ left: "fast", op: "crosses_above", right: "slow" }] },
+          exit: { all: [{ left: "fast", op: "crosses_below", right: "slow" }] },
+          risk: { stop_loss_pct: 0.08, take_profit_pct: 0.2 },
+        }, null, 2),
+      },
       result: null,
       dataSourceSettings: {
         dataSource: "auto",
@@ -170,7 +226,16 @@ const app = createApp({
       chatSessionId: null,
       chatMessages: [],
       chatReply: "",
+      chatThinking: "",
       chatTrace: null,
+      chatSidebarOpen: true,
+      chatHistoryQuery: "",
+      chatHistory: JSON.parse(localStorage.getItem("stock-harness-chat-history") || "[]"),
+      chatStarters: [
+        { icon: "⌁", title: "市场复盘", prompt: "总结今天关注标的的走势、异动和明日观察点。" },
+        { icon: "↗", title: "策略研究", prompt: "基于我的订阅股票，提出一个可回测的交易策略假设。" },
+        { icon: "◎", title: "风险检查", prompt: "检查当前关注标的可能存在的风险，并按重要性排序。" },
+      ],
       availableModels: [],
       subscriptions: [],
       subscriptionForm: {
@@ -253,6 +318,7 @@ const app = createApp({
   },
   beforeUnmount() {
     disposeDashboardCharts();
+    disposeBacktestCharts();
   },
   methods: {
     async bootstrap() {
@@ -327,12 +393,16 @@ const app = createApp({
     },
     async activateModule(moduleName) {
       if (moduleName !== "dashboard") disposeDashboardCharts();
+      if (moduleName !== "backtest") disposeBacktestCharts();
       this.activeModule = moduleName;
       this.error = "";
       this.settingsMessage = "";
       if (moduleName === "dashboard") {
         await nextTick();
         this.renderDashboardCharts();
+      } else if (moduleName === "backtest" && this.result) {
+        await nextTick();
+        this.renderBacktestCharts();
       }
     },
     async loadDataSourceSettings() {
@@ -711,16 +781,42 @@ const app = createApp({
       localStorage.setItem("stock-harness-pi-tasks", JSON.stringify(this.savedTasks));
     },
     newChatSession() {
+      this.archiveCurrentChat();
       this.chatSessionId = null;
       this.chatMessages = [];
       this.chatReply = "";
+      this.chatThinking = "";
       this.chatTrace = null;
       this.error = "";
+    },
+    archiveCurrentChat() {
+      if (!this.chatMessages.length) return;
+      const first = this.chatMessages.find((item) => item.role === "user")?.content || "新对话";
+      const entry = {
+        id: this.chatSessionId || Date.now(),
+        title: first.slice(0, 28),
+        updatedAt: new Date().toISOString(),
+        messages: this.chatMessages,
+      };
+      this.chatHistory = [entry, ...this.chatHistory.filter((item) => item.id !== entry.id)].slice(0, 30);
+      localStorage.setItem("stock-harness-chat-history", JSON.stringify(this.chatHistory));
+    },
+    openChatHistory(entry) {
+      this.archiveCurrentChat();
+      this.chatSessionId = entry.id;
+      this.chatMessages = entry.messages || [];
+      this.chatReply = "";
+      this.chatThinking = "";
+    },
+    filteredChatHistory() {
+      const query = this.chatHistoryQuery.trim().toLowerCase();
+      return query ? this.chatHistory.filter((item) => item.title.toLowerCase().includes(query)) : this.chatHistory;
     },
     async startChat() {
       if (!this.chatForm.message.trim() || this.chatLoading) return;
       this.chatLoading = true;
       this.chatReply = "";
+      this.chatThinking = "";
       this.chatTrace = null;
       this.error = "";
       const userMessage = this.chatForm.message.trim();
@@ -746,13 +842,16 @@ const app = createApp({
               this.chatSessionId = chunk.meta.sessionId ?? chunk.meta.conversationId;
             }
             this.chatReply = chunk.fullContent ?? this.chatReply;
+            this.chatThinking = chunk.fullThinking ?? this.chatThinking;
           },
         );
         const assistantContent = result.content || this.chatReply;
-        if (assistantContent) {
-          this.chatMessages.push({ role: "assistant", content: assistantContent, roleName: this.chatTrace?.role ?? "个人助手" });
+        const assistantThinking = result.thinking || this.chatThinking;
+        if (assistantContent || assistantThinking) {
+          this.chatMessages.push({ role: "assistant", content: assistantContent, thinking: assistantThinking, roleName: this.chatTrace?.role ?? "个人助手" });
         }
         this.chatReply = "";
+        this.chatThinking = "";
         this.setComposerText("");
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error);
@@ -769,6 +868,7 @@ const app = createApp({
         this.chatSessionId = event.sessionId ?? event.conversationId;
       }
       if (event.type === "delta") this.chatReply += event.content ?? "";
+      if (event.type === "thinking") this.chatThinking += event.content ?? "";
       if (event.type === "error") throw new Error(event.message ?? "Pi Runtime 对话失败");
     },
     chatRoleLabel() {
@@ -784,6 +884,9 @@ const app = createApp({
     insertStockMention(stock) {
       const label = `#${stock.symbol}${stock.stockName ? `(${stock.stockName})` : ""} `;
       this.setComposerText(`${this.chatForm.message}${this.chatForm.message ? " " : ""}${label}`);
+    },
+    useChatStarter(starter) {
+      this.setComposerText(starter.prompt);
     },
     syncComposer(event) {
       this.chatForm.message = event.currentTarget.innerText.replace(/\u00a0/g, " ").trim();
@@ -804,16 +907,34 @@ const app = createApp({
       });
     },
     messageParts(content) {
+      const visible = this.messageView(content).content;
       const parts = [];
       const pattern = /```pi-plugin\s*([\s\S]*?)```/g;
       let lastIndex = 0;
-      for (const match of content.matchAll(pattern)) {
-        if (match.index > lastIndex) parts.push({ type: "markdown", html: this.renderMarkdown(content.slice(lastIndex, match.index)) });
+      for (const match of visible.matchAll(pattern)) {
+        if (match.index > lastIndex) parts.push({ type: "markdown", html: this.renderMarkdown(visible.slice(lastIndex, match.index)) });
         parts.push({ type: "plugin", plugin: this.parsePluginBlock(match[1]) });
         lastIndex = match.index + match[0].length;
       }
-      if (lastIndex < content.length) parts.push({ type: "markdown", html: this.renderMarkdown(content.slice(lastIndex)) });
-      return parts.length ? parts : [{ type: "markdown", html: this.renderMarkdown(content) }];
+      if (lastIndex < visible.length) parts.push({ type: "markdown", html: this.renderMarkdown(visible.slice(lastIndex)) });
+      return parts.length ? parts : [{ type: "markdown", html: this.renderMarkdown(visible) }];
+    },
+    messageView(content = "", explicitThinking = "") {
+      let visible = String(content || "");
+      const thoughts = [];
+      const thinkPattern = /<think>([\s\S]*?)(?:<\/think>|$)/gi;
+      visible = visible.replace(thinkPattern, (_, thought) => {
+        if (thought?.trim()) thoughts.push(thought.trim());
+        return "";
+      });
+      const thinking = [explicitThinking, ...thoughts].filter(Boolean).join("\n\n").trim();
+      return { content: visible.trim(), thinking };
+    },
+    thinkingText(content = "", explicitThinking = "") {
+      return this.messageView(content, explicitThinking).thinking;
+    },
+    thinkingHtml(content = "", explicitThinking = "") {
+      return this.renderMarkdown(this.thinkingText(content, explicitThinking));
     },
     renderMarkdown(content) {
       return markdown.render(content || "");
@@ -1019,6 +1140,70 @@ const app = createApp({
       const selected = this.strategies.find((item) => item.key === this.form.strategy);
       if (selected) this.form.strategy_params = { ...selected.default_params };
     },
+    openBacktestStrategyEditor(strategy = null) {
+      this.backtestStrategyForm = strategy ? {
+        id: strategy.id,
+        name: strategy.name,
+        description: strategy.description || "",
+        definitionText: JSON.stringify(strategy.definition, null, 2),
+      } : {
+        id: null,
+        name: "新回测策略",
+        description: "由 JSON 规则驱动的回测策略。",
+        definitionText: JSON.stringify({
+          indicators: { fast: { type: "sma", period: 10 }, slow: { type: "sma", period: 30 } },
+          entry: { all: [{ left: "fast", op: "crosses_above", right: "slow" }] },
+          exit: { all: [{ left: "fast", op: "crosses_below", right: "slow" }] },
+          risk: { stop_loss_pct: 0.08 },
+        }, null, 2),
+      };
+      this.showBacktestStrategyEditor = true;
+    },
+    editSelectedBacktestStrategy() {
+      const selected = this.strategies.find((item) => item.key === this.form.strategy);
+      if (selected?.source === "custom") this.openBacktestStrategyEditor(selected);
+    },
+    async saveBacktestStrategy() {
+      this.error = "";
+      try {
+        const definition = JSON.parse(this.backtestStrategyForm.definitionText);
+        const id = this.backtestStrategyForm.id;
+        const saved = await this.api(id ? `/backtest-strategies/${id}` : "/backtest-strategies", {
+          method: id ? "PUT" : "POST",
+          body: JSON.stringify({
+            name: this.backtestStrategyForm.name,
+            description: this.backtestStrategyForm.description,
+            definition,
+          }),
+        });
+        await this.loadStrategies();
+        this.form.strategy = saved.key;
+        this.applyStrategyDefaults();
+        this.showBacktestStrategyEditor = false;
+      } catch (error) {
+        this.error = error instanceof SyntaxError ? `策略 JSON 格式错误：${error.message}` : error instanceof Error ? error.message : String(error);
+      }
+    },
+    async removeSelectedBacktestStrategy() {
+      const selected = this.strategies.find((item) => item.key === this.form.strategy);
+      if (selected?.source !== "custom" || !window.confirm(`确认删除策略“${selected.name}”？`)) return;
+      await this.api(`/backtest-strategies/${selected.id}`, { method: "DELETE" });
+      this.form.strategy = "ma_cross";
+      await this.loadStrategies();
+    },
+    setBacktestRange(range) {
+      const end = new Date();
+      const start = new Date(end);
+      if (range === "ytd") {
+        start.setMonth(0, 1);
+      } else if (range === "6m") {
+        start.setMonth(start.getMonth() - 6);
+      } else {
+        start.setFullYear(start.getFullYear() - Number(range));
+      }
+      this.form.start = dateInputValue(start);
+      this.form.end = dateInputValue(end);
+    },
     strategyLabel(key, fallback) {
       return strategyLabels[key] ?? fallback ?? key;
     },
@@ -1097,26 +1282,28 @@ const app = createApp({
     },
     renderBacktestCharts() {
       if (!this.result) return;
-      Plotly.react(
-        "equityChart",
-        [
-          { type: "scatter", x: this.result.equity.map((row) => row.date), y: this.result.equity.map((row) => row.value), name: "策略" },
-          {
-            type: "scatter",
-            x: this.result.benchmark_equity.map((row) => row.date),
-            y: this.result.benchmark_equity.map((row) => row.value),
-            name: "买入持有",
-          },
-        ],
-        { title: "权益曲线", height: 320, margin: { l: 50, r: 20, t: 45, b: 40 } },
-        { responsive: true },
+      disposeBacktestCharts();
+
+      const equityChart = createBacktestChart(
+        document.getElementById("equityChart"),
+        (value) => new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value),
       );
-      Plotly.react(
-        "drawdownChart",
-        [{ type: "scatter", fill: "tozeroy", x: this.result.drawdown.map((row) => row.date), y: this.result.drawdown.map((row) => row.value * 100), name: "回撤" }],
-        { title: "回撤 (%)", height: 320, margin: { l: 50, r: 20, t: 45, b: 40 } },
-        { responsive: true },
-      );
+      const strategySeries = equityChart.addSeries(LineSeries, { color: "#2563eb", lineWidth: 2, title: "策略" });
+      strategySeries.setData(this.result.equity.map((row) => ({ time: row.date, value: row.value })));
+      const benchmarkSeries = equityChart.addSeries(LineSeries, { color: "#f97316", lineWidth: 2, title: "买入持有" });
+      benchmarkSeries.setData(this.result.benchmark_equity.map((row) => ({ time: row.date, value: row.value })));
+      equityChart.timeScale().fitContent();
+
+      const drawdownChart = createBacktestChart(document.getElementById("drawdownChart"), (value) => `${value.toFixed(1)}%`);
+      const drawdownSeries = drawdownChart.addSeries(AreaSeries, {
+        lineColor: "#dc2626",
+        topColor: "rgba(220, 38, 38, 0.08)",
+        bottomColor: "rgba(220, 38, 38, 0.32)",
+        lineWidth: 2,
+        title: "回撤",
+      });
+      drawdownSeries.setData(this.result.drawdown.map((row) => ({ time: row.date, value: row.value * 100 })));
+      drawdownChart.timeScale().fitContent();
     },
   },
   template: `
@@ -1168,7 +1355,7 @@ const app = createApp({
         </nav>
       </aside>
 
-      <main>
+      <main :class="{ 'chat-main': activeModule === 'pi-chat' }">
         <header>
           <h1>本地量化助手</h1>
           <p>Pi Runtime -> Node API -> Python Backtrader Core</p>
@@ -1413,35 +1600,49 @@ const app = createApp({
               <label>股票代码<input v-model.trim="form.symbol" /></label>
               <label>开始日期<input type="date" v-model="form.start" /></label>
               <label>结束日期<input type="date" v-model="form.end" /></label>
-              <label>复权方式
+              <div class="backtest-date-presets" aria-label="快速选择回测日期范围">
+                <span>快速选择</span>
+                <button type="button" class="small ghost" @click="setBacktestRange('6m')">近 6 月</button>
+                <button type="button" class="small ghost" @click="setBacktestRange(1)">近 1 年</button>
+                <button type="button" class="small ghost" @click="setBacktestRange(3)">近 3 年</button>
+                <button type="button" class="small ghost" @click="setBacktestRange(5)">近 5 年</button>
+                <button type="button" class="small ghost" @click="setBacktestRange('ytd')">今年以来</button>
+              </div>
+              <label><span class="field-label">复权方式 <span class="info-tip" tabindex="0" aria-label="复权方式说明" data-tooltip="把分红、送股等造成的价格跳变进行修正。前复权适合观察当前价格下的历史走势；后复权适合衡量长期累计收益。">?</span></span>
                 <select v-model="form.adjust">
                   <option value="qfq">qfq 前复权</option>
                   <option value="hfq">hfq 后复权</option>
                   <option value="none">none 不复权</option>
                 </select>
               </label>
-              <label>策略
+              <label><span class="field-label">策略 <span class="info-tip" tabindex="0" aria-label="策略说明" data-tooltip="决定什么时候买入和卖出的规则。双均线交叉通常在短期均线上穿长期均线时买入，反向交叉时卖出。">?</span></span>
                 <select v-model="form.strategy" @change="applyStrategyDefaults">
                   <option v-for="strategy in strategies" :key="strategy.key" :value="strategy.key">{{ strategyLabel(strategy.key, strategy.label) }}</option>
                 </select>
               </label>
-              <label v-for="(_, key) in form.strategy_params" :key="key">{{ paramLabel(key) }}<input type="number" v-model.number="form.strategy_params[key]" /></label>
-              <label>初始资金<input type="number" v-model.number="form.cash" /></label>
-              <label>单边手续费 (bps)<input type="number" v-model.number="form.commission_bps" /></label>
+              <label v-for="(_, key) in form.strategy_params" :key="key"><span class="field-label">{{ paramLabel(key) }} <span class="info-tip" tabindex="0" :data-tooltip="key === 'fast' ? '短期均线使用的交易日数量。数值越小，对近期价格变化越敏感。' : key === 'slow' ? '长期均线使用的交易日数量。通常应大于快均线周期，用来判断较长期趋势。' : '策略计算该指标时使用的周期参数。'">?</span></span><input type="number" v-model.number="form.strategy_params[key]" /></label>
+              <label><span class="field-label">初始资金 <span class="info-tip" tabindex="0" data-tooltip="回测开始时可用的模拟资金，只影响金额曲线，不代表收益率一定更高。">?</span></span><input type="number" v-model.number="form.cash" /></label>
+              <label><span class="field-label">单边手续费 (bps) <span class="info-tip" tabindex="0" data-tooltip="每次买入或卖出单独收取的交易成本。1 bps = 0.01%，例如 3 bps = 0.03%。">?</span></span><input type="number" v-model.number="form.commission_bps" /></label>
               <button :disabled="loading">{{ loading ? "回测中..." : "运行回测" }}</button>
             </form>
             <div class="backtest-result">
               <section class="metrics" v-if="result">
-                <article><span>策略总收益</span><strong>{{ pct(result.stats.total_return) }}</strong></article>
-                <article><span>买入持有</span><strong>{{ pct(result.stats.benchmark_return) }}</strong></article>
-                <article><span>年化收益</span><strong>{{ pct(result.stats.annualized_return) }}</strong></article>
-                <article><span>最大回撤</span><strong>{{ pct(result.stats.max_drawdown) }}</strong></article>
-                <article><span>夏普比率</span><strong>{{ Number(result.stats.sharpe).toFixed(2) }}</strong></article>
-                <article><span>交易次数</span><strong>{{ result.stats.trade_count }}</strong></article>
+                <article><span>策略总收益 <span class="info-tip" tabindex="0" data-tooltip="策略期末相对初始资金的累计涨跌幅，已经计入设置的手续费。">?</span></span><strong>{{ pct(result.stats.total_return) }}</strong></article>
+                <article><span>买入持有 <span class="info-tip" tabindex="0" data-tooltip="同一时期买入标的并一直持有的累计收益，用作策略表现的基准。">?</span></span><strong>{{ pct(result.stats.benchmark_return) }}</strong></article>
+                <article><span>年化收益 <span class="info-tip" tabindex="0" data-tooltip="把整个回测期收益折算成平均每年的复合收益率，便于比较不同时间长度的回测。">?</span></span><strong>{{ pct(result.stats.annualized_return) }}</strong></article>
+                <article><span>最大回撤 <span class="info-tip" tabindex="0" data-tooltip="权益从历史高点到之后最低点的最大跌幅。绝对值越大，代表期间可能承受的亏损压力越大。">?</span></span><strong>{{ pct(result.stats.max_drawdown) }}</strong></article>
+                <article><span>夏普比率 <span class="info-tip" tabindex="0" data-tooltip="衡量每承担一单位波动风险获得的收益。通常越高越好，但应结合回撤和样本长度一起判断。">?</span></span><strong>{{ Number(result.stats.sharpe).toFixed(2) }}</strong></article>
+                <article><span>交易次数 <span class="info-tip" tabindex="0" data-tooltip="回测期间完成的交易数量。次数太少可能使统计结论不稳定，太多则更受手续费和滑点影响。">?</span></span><strong>{{ result.stats.trade_count }}</strong></article>
               </section>
               <section class="charts" v-if="result">
-                <div id="equityChart"></div>
-                <div id="drawdownChart"></div>
+                <article class="backtest-chart-card">
+                  <header><strong>权益曲线</strong><span class="info-tip" tabindex="0" data-tooltip="展示策略资金随时间的变化，并与买入持有比较。曲线越高表示期末资金越多。可滚轮缩放、拖动查看。">?</span></header>
+                  <div id="equityChart" class="backtest-chart"></div>
+                </article>
+                <article class="backtest-chart-card">
+                  <header><strong>回撤（%）</strong><span class="info-tip" tabindex="0" data-tooltip="表示当前权益相比此前最高点下跌了多少。0% 代表正处于新高，数值越负代表离历史高点越远。">?</span></header>
+                  <div id="drawdownChart" class="backtest-chart"></div>
+                </article>
               </section>
               <div v-else class="empty-state">设置参数后运行回测。</div>
             </div>
@@ -1449,25 +1650,44 @@ const app = createApp({
         </section>
 
         <section v-if="activeModule === 'pi-chat'" class="module-panel">
+          <div class="openwebui-shell" :class="{ 'sidebar-hidden': !chatSidebarOpen }">
+            <div class="chat-history-sidebar">
+              <div class="history-brand"><span class="history-logo">✦</span><strong>Stock AI</strong><button type="button" title="收起侧栏" @click="chatSidebarOpen = false">‹</button></div>
+              <button class="history-new" type="button" @click="newChatSession"><span>＋</span> 新对话</button>
+              <label class="history-search"><span>⌕</span><input v-model="chatHistoryQuery" placeholder="搜索对话" /></label>
+              <div class="history-section">
+                <small>最近</small>
+                <button v-for="entry in filteredChatHistory()" :key="entry.id" type="button" :class="{ active: entry.id === chatSessionId }" @click="openChatHistory(entry)">
+                  <span>◌</span><span>{{ entry.title }}</span><b>···</b>
+                </button>
+                <p v-if="!filteredChatHistory().length">暂无历史对话</p>
+              </div>
+              <div class="history-footer"><span>{{ (currentUser?.username || 'U').slice(0, 1).toUpperCase() }}</span><div><strong>{{ currentUser?.username || '用户' }}</strong><small>个人工作区</small></div><b>···</b></div>
+            </div>
+            <button v-if="!chatSidebarOpen" class="sidebar-reopen" type="button" title="展开侧栏" @click="chatSidebarOpen = true">☰</button>
           <div class="codex-chat">
             <div class="codex-chat-top">
               <div>
-                <h2>Pi</h2>
+                <div class="chat-title"><span class="openai-mark">✦</span><h2>研究助手</h2><span class="status-dot">在线</span></div>
                 <div class="chat-session-line">
                   <span>{{ chatSessionId ? 'Session #' + chatSessionId : '新会话' }}</span>
                   <span v-if="chatTrace">{{ chatTrace.model }}</span>
                   <span v-if="chatTrace">{{ chatTrace.role }} · {{ routeLabel(chatTrace.route) }}</span>
                 </div>
               </div>
-              <button class="small" type="button" @click="newChatSession">新建</button>
+              <button class="chat-new-button" type="button" @click="newChatSession"><span>＋</span> 新对话</button>
             </div>
 
-            <div class="codex-thread" :class="{ empty: !chatMessages.length && !chatReply && !chatLoading }">
-              <template v-if="chatMessages.length || chatReply || chatLoading">
+            <div class="codex-thread" :class="{ empty: !chatMessages.length && !chatReply && !chatThinking && !chatLoading }">
+              <template v-if="chatMessages.length || chatReply || chatThinking || chatLoading">
                 <article v-for="(item, index) in chatMessages" :key="index" :class="['codex-message', item.role]">
                   <div class="message-avatar">{{ item.role === "user" ? "你" : (item.roleName || "Pi").slice(0, 2) }}</div>
                   <div class="message-body">
                     <strong>{{ item.role === "user" ? "你" : item.roleName }}</strong>
+                    <details v-if="item.role === 'assistant' && thinkingText(item.content, item.thinking)" class="thinking-panel">
+                      <summary>思考过程</summary>
+                      <div class="markdown-body" v-html="thinkingHtml(item.content, item.thinking)"></div>
+                    </details>
                     <template v-for="(part, partIndex) in messageParts(item.content)" :key="partIndex">
                       <div v-if="part.type === 'markdown'" class="markdown-body" v-html="part.html"></div>
                       <div v-else class="plugin-render">
@@ -1484,10 +1704,14 @@ const app = createApp({
                     </template>
                   </div>
                 </article>
-                <article v-if="chatReply || chatLoading" class="codex-message assistant">
+                <article v-if="chatReply || chatThinking || chatLoading" class="codex-message assistant">
                   <div class="message-avatar">{{ (chatTrace?.role || "Pi").slice(0, 2) }}</div>
                   <div class="message-body">
                     <strong>{{ chatTrace?.role || "Pi" }}</strong>
+                    <details v-if="thinkingText(chatReply, chatThinking)" class="thinking-panel">
+                      <summary>思考过程</summary>
+                      <div class="markdown-body" v-html="thinkingHtml(chatReply, chatThinking)"></div>
+                    </details>
                     <template v-for="(part, partIndex) in messageParts(chatReply)" :key="partIndex">
                       <div v-if="part.type === 'markdown'" class="markdown-body" v-html="part.html"></div>
                       <div v-else class="plugin-render">
@@ -1514,8 +1738,14 @@ const app = createApp({
               </template>
               <template v-else>
                 <div class="codex-empty">
-                  <h3>今天要研究什么？</h3>
-                  <p>直接输入问题，或用 @ 指派角色。</p>
+                  <div class="empty-logo">✦</div>
+                  <h3>有什么可以帮忙的？</h3>
+                  <p>选择一个开始方式，或直接在下方输入问题。</p>
+                  <div class="starter-grid">
+                    <button v-for="starter in chatStarters" :key="starter.title" type="button" class="starter-card" @click="useChatStarter(starter)">
+                      <span>{{ starter.icon }}</span><strong>{{ starter.title }}</strong><small>{{ starter.prompt }}</small>
+                    </button>
+                  </div>
                 </div>
               </template>
             </div>
@@ -1527,7 +1757,7 @@ const app = createApp({
               <div class="stock-chip-row" v-if="subscriptions.length">
                 <button v-for="stock in subscriptions" :key="stock.id" type="button" class="stock-chip" @click="insertStockMention(stock)">#{{ stock.symbol }} {{ stock.stockName }}</button>
               </div>
-              <div ref="chatComposer" class="rich-composer" contenteditable="true" data-placeholder="询问 Pi，或输入 @策略研究员，点击股票标签快速插入..." @input="syncComposer" @keydown.enter.exact.prevent="startChat"></div>
+              <div ref="chatComposer" class="rich-composer" contenteditable="true" data-placeholder="给研究助手发送消息…" @input="syncComposer" @keydown.enter.exact.prevent="startChat"></div>
               <div class="composer-actions">
                 <label class="composer-select">模型
                   <select v-model="chatForm.modelConfigId" title="本轮使用的模型" @change="selectChatModelConfig">
@@ -1539,9 +1769,11 @@ const app = createApp({
                   <option value="">自动</option>
                   <option v-for="role in roles" :key="role.id" :value="role.id">{{ role.name }}</option>
                 </select>
-                <button :disabled="chatLoading || !chatForm.message.trim()">{{ chatLoading ? "生成中..." : "发送" }}</button>
+                <span class="composer-hint">Enter 发送</span>
+                <button class="send-button" :disabled="chatLoading || !chatForm.message.trim()" :aria-label="chatLoading ? '生成中' : '发送消息'">{{ chatLoading ? "…" : "↑" }}</button>
               </div>
             </form>
+          </div>
           </div>
         </section>
 
@@ -1707,70 +1939,104 @@ const app = createApp({
           </div>
         </section>
 
-        <section v-if="activeModule === 'settings'" class="module-panel">
-          <div class="panel-head">
+        <section v-if="activeModule === 'settings'" class="module-panel system-settings">
+          <div class="panel-head system-page-head">
             <div>
+              <span class="section-kicker">SYSTEM SETTINGS</span>
               <h2>系统管理</h2>
-              <p>配置平台默认数据源。保存后，Dashboard、股票查询、回测和后续 Pi Runtime 任务都会使用这套配置。</p>
+              <p>统一管理平台的数据源与 AI 模型，保存后将应用到行情、回测和 Pi Runtime 任务。</p>
             </div>
           </div>
-          <form class="settings-form system-form" @submit.prevent="saveDataSourceSettings">
-            <label>默认数据源
-              <select v-model="dataSourceSettings.dataSource">
-                <option value="auto">自动数据源（AkShare/Yahoo）</option>
-                <option value="futu">Futu OpenD</option>
-              </select>
-            </label>
-            <div v-if="dataSourceSettings.dataSource === 'futu'" class="source-panel">
-              <h3>Futu OpenD 服务器</h3>
-              <div class="source-grid">
-                <label>Host<input v-model.trim="dataSourceSettings.futuHost" placeholder="127.0.0.1" /></label>
-                <label>Port<input type="number" v-model.number="dataSourceSettings.futuPort" min="1" max="65535" /></label>
+          <div class="system-settings-grid">
+            <form class="settings-form system-form data-source-card" @submit.prevent="saveDataSourceSettings">
+              <div class="settings-card-head">
+                <div class="settings-card-icon">数</div>
+                <div><h3>行情数据源</h3><p>设置全局默认的行情服务</p></div>
               </div>
-            </div>
-            <button :disabled="settingsSaving">{{ settingsSaving ? "保存中..." : "保存并切换数据源" }}</button>
-            <div v-if="settingsMessage" class="success">{{ settingsMessage }}</div>
-            <p class="hint dark">自动数据源适合不开 Futu OpenD 时使用；Futu OpenD 适合实时行情、订阅推送和交易接口。</p>
-          </form>
-          <form class="settings-form system-form" @submit.prevent="saveModelSettings">
-            <div class="panel-head"><h3>模型配置</h3><button type="button" class="small" @click="newModelConfig">新增模型</button></div>
-            <div class="role-chip-row" v-if="modelConfigs.length">
-              <button v-for="config in modelConfigs" :key="config.id" type="button" class="role-chip" @click="editModelConfig(config)">{{ config.isDefault ? '默认 · ' : '' }}{{ config.name }}</button>
-            </div>
-            <label>配置名称<input v-model.trim="modelSettings.name" placeholder="如：GLM-4.5 / 本地 Qwen" /></label>
-            <label>模型提供方
-              <select v-model="modelSettings.provider">
-                <option value="ollama">Ollama 本地模型</option>
-                <option value="openai">OpenAI 兼容 API（OpenAI / GLM / DeepSeek 等）</option>
-              </select>
-            </label>
-            <label><input type="checkbox" v-model="modelSettings.isDefault" /> 设为默认模型</label>
-            <div class="source-grid">
-              <label>模型名称<input v-model.trim="modelSettings.model" placeholder="qwen2.5-coder:14b" /></label>
-              <label>Base URL<input v-model.trim="modelSettings.baseUrl" placeholder="http://127.0.0.1:11434" /></label>
-            </div>
-            <div v-if="modelSettings.provider === 'openai'" class="source-panel">
-              <label>API Key 环境变量名<input v-model.trim="modelSettings.apiKeyRef" placeholder="OPENAI_API_KEY" /></label>
-            </div>
-            <div class="source-grid">
-              <label>Temperature<input type="number" min="0" max="2" step="0.1" v-model.number="modelSettings.temperature" /></label>
-              <label>最大输出 Token<input type="number" min="256" max="131072" v-model.number="modelSettings.maxOutputTokens" /></label>
-              <label>上下文预算 Token<input type="number" min="1024" max="1048576" v-model.number="modelSettings.contextBudgetTokens" /></label>
-              <label>推理强度
+              <label>默认数据源
+                <select v-model="dataSourceSettings.dataSource">
+                  <option value="auto">自动数据源（AkShare/Yahoo）</option>
+                  <option value="futu">Futu OpenD</option>
+                </select>
+              </label>
+              <div class="button-row">
+                <button type="button" class="small ghost" @click="openBacktestStrategyEditor()">新增 JSON 策略</button>
+                <button v-if="strategies.find(item => item.key === form.strategy)?.source === 'custom'" type="button" class="small ghost" @click="editSelectedBacktestStrategy">编辑策略</button>
+                <button v-if="strategies.find(item => item.key === form.strategy)?.source === 'custom'" type="button" class="small danger" @click="removeSelectedBacktestStrategy">删除策略</button>
+              </div>
+              <section v-if="showBacktestStrategyEditor" class="strategy-json-editor">
+                <label>策略名称<input v-model.trim="backtestStrategyForm.name" maxlength="80" /></label>
+                <label>策略说明<input v-model.trim="backtestStrategyForm.description" /></label>
+                <label>JSON 定义<textarea v-model="backtestStrategyForm.definitionText" rows="18" spellcheck="false"></textarea></label>
+                <small>指标支持 sma、ema、rsi；条件支持 &gt;、&gt;=、&lt;、&lt;=、==、!=、crosses_above、crosses_below；操作数可用指标名、close 或数字。</small>
+                <div class="button-row">
+                  <button type="button" class="small" @click="saveBacktestStrategy">保存策略</button>
+                  <button type="button" class="small ghost" @click="showBacktestStrategyEditor = false">取消</button>
+                </div>
+              </section>
+              <div v-if="dataSourceSettings.dataSource === 'futu'" class="source-panel">
+                <h4>Futu OpenD 服务器</h4>
+                <div class="source-grid compact">
+                  <label>Host<input v-model.trim="dataSourceSettings.futuHost" placeholder="127.0.0.1" /></label>
+                  <label>Port<input type="number" v-model.number="dataSourceSettings.futuPort" min="1" max="65535" /></label>
+                </div>
+              </div>
+              <div class="settings-card-footer">
+                <button :disabled="settingsSaving">{{ settingsSaving ? "保存中..." : "保存并切换" }}</button>
+                <p class="hint dark">Futu 适合实时行情与交易；未启动时可使用自动数据源。</p>
+              </div>
+              <div v-if="settingsMessage" class="success">{{ settingsMessage }}</div>
+            </form>
+
+            <form class="settings-form system-form model-settings-card" @submit.prevent="saveModelSettings">
+              <div class="settings-card-head">
+                <div class="settings-card-icon purple">模</div>
+                <div><h3>模型配置</h3><p>管理 Pi Runtime 使用的推理模型</p></div>
+                <button type="button" class="small secondary-action" @click="newModelConfig">＋ 新增模型</button>
+              </div>
+              <div class="role-chip-row model-config-tabs" v-if="modelConfigs.length">
+                <button v-for="config in modelConfigs" :key="config.id" type="button" class="role-chip" :class="{ active: modelSettings.id === config.id }" @click="editModelConfig(config)"><span v-if="config.isDefault" class="default-dot"></span>{{ config.name }}</button>
+              </div>
+              <div class="model-form-grid">
+                <label>配置名称<input v-model.trim="modelSettings.name" placeholder="如：GLM-4.5 / 本地 Qwen" /></label>
+                <label>模型提供方
+                  <select v-model="modelSettings.provider">
+                    <option value="ollama">Ollama 本地模型</option>
+                    <option value="openai">OpenAI 兼容 API（OpenAI / GLM / DeepSeek 等）</option>
+                  </select>
+                </label>
+                <label>模型名称<input v-model.trim="modelSettings.model" placeholder="qwen2.5-coder:14b" /></label>
+                <label>Base URL<input v-model.trim="modelSettings.baseUrl" placeholder="http://127.0.0.1:11434" /></label>
+              </div>
+              <div v-if="modelSettings.provider === 'openai'" class="source-panel api-key-panel">
+                <label>API Key 环境变量名<input v-model.trim="modelSettings.apiKeyRef" placeholder="OPENAI_API_KEY" /></label>
+              </div>
+              <div class="advanced-settings">
+                <h4>生成参数</h4>
+                <div class="parameter-grid">
+                  <label>Temperature<input type="number" min="0" max="2" step="0.1" v-model.number="modelSettings.temperature" /></label>
+                  <label>最大输出 Token<input type="number" min="256" max="131072" v-model.number="modelSettings.maxOutputTokens" /></label>
+                  <label>上下文预算 Token<input type="number" min="1024" max="1048576" v-model.number="modelSettings.contextBudgetTokens" /></label>
+                  <label>推理强度
                 <select v-model="modelSettings.reasoningEffort">
                   <option value="low">低</option>
                   <option value="medium">中</option>
                   <option value="high">高</option>
                 </select>
-              </label>
-            </div>
-            <div class="button-row">
-              <button :disabled="settingsSaving">{{ settingsSaving ? "保存中..." : "保存模型配置" }}</button>
-              <button type="button" class="small" :disabled="settingsSaving" @click="testModelConnection">测试连接</button>
-              <button v-if="modelSettings.id" type="button" class="small danger" @click="deleteModelConfig(modelSettings)">删除</button>
-            </div>
-            <p class="hint dark">Ollama 不需要 API Key；GLM 等服务请选择 OpenAI 兼容 API，填写其兼容端点，并把密钥放入所填名称的服务器环境变量。</p>
-          </form>
+                  </label>
+                </div>
+              </div>
+              <label class="default-model-toggle"><input type="checkbox" v-model="modelSettings.isDefault" /><span><strong>设为默认模型</strong><small>新任务将优先使用此配置</small></span></label>
+              <div class="model-form-actions">
+                <div class="button-row">
+                  <button :disabled="settingsSaving">{{ settingsSaving ? "保存中..." : "保存模型配置" }}</button>
+                  <button type="button" class="small outline-button" :disabled="settingsSaving" @click="testModelConnection">测试连接</button>
+                  <button v-if="modelSettings.id" type="button" class="small danger ghost-danger" @click="deleteModelConfig(modelSettings)">删除</button>
+                </div>
+                <p class="hint dark">Ollama 无需 API Key；兼容服务的密钥请通过服务器环境变量配置。</p>
+              </div>
+            </form>
+          </div>
         </section>
       </main>
     </div>

@@ -1,0 +1,9 @@
+{
+  "id": 3,
+  "userId": 2,
+  "name": "回测研究院",
+  "responsibility": "回测研究工作",
+  "systemPrompt": "使用回测模型分析",
+  "createdAt": "2026-07-11T20:36:24.832Z",
+  "updatedAt": "2026-07-11T20:39:38.960Z"
+}

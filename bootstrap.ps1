@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("all", "python-core", "node-api", "web")]
+    [ValidateSet("all", "ollama", "python-core", "node-api", "web")]
     [string]$Service = "all"
 )
 

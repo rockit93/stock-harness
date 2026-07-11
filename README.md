@@ -28,6 +28,8 @@ backend/python-core (FastAPI + quant core)
 python bootstrap.py
 # 或只启动单个服务
 python bootstrap.py web
+# Ollama 已安装时，也可以单独启动
+python bootstrap.py ollama
 ```
 
 Linux / macOS 可以使用 shell 包装：
@@ -44,7 +46,11 @@ Windows PowerShell 也可以使用：
 powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
 # 或只启动单个服务
 powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -Service web
+# Ollama 已安装时，也可以单独启动
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -Service ollama
 ```
+
+统一入口执行 `all` 时会检测 Ollama：已安装且尚未运行则自动执行 `ollama serve`，未安装则跳过；如果 Ollama 已在 `11434` 端口运行，则直接复用现有服务。
 
 默认启动的是开发模式，支持热更新：
 

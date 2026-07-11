@@ -37,6 +37,7 @@ export class PiRuntimeProvider extends BaseProvider {
       const decoder = new TextDecoder();
       let buffer = "";
       let fullContent = "";
+      let fullThinking = "";
       let meta = null;
 
       const consumeLine = (line) => {
@@ -45,13 +46,19 @@ export class PiRuntimeProvider extends BaseProvider {
         if (!event) return;
         if (event.type === "meta") {
           meta = event;
-          onChunk?.({ content: "", fullContent, done: false, meta });
+          onChunk?.({ content: "", thinking: "", fullContent, fullThinking, done: false, meta });
+          return;
+        }
+        if (event.type === "thinking") {
+          const thinking = event.content ?? "";
+          fullThinking += thinking;
+          onChunk?.({ content: "", thinking, fullContent, fullThinking, done: false, meta });
           return;
         }
         if (event.type === "delta") {
           const content = event.content ?? "";
           fullContent += content;
-          onChunk?.({ content, fullContent, done: false, meta });
+          onChunk?.({ content, thinking: "", fullContent, fullThinking, done: false, meta });
           return;
         }
         if (event.type === "error") {
@@ -69,8 +76,8 @@ export class PiRuntimeProvider extends BaseProvider {
       }
 
       if (buffer.trim()) consumeLine(buffer);
-      onChunk?.({ content: "", fullContent, done: true, meta, finishReason: "stop" });
-      return { content: fullContent, usage: null, meta };
+      onChunk?.({ content: "", thinking: "", fullContent, fullThinking, done: true, meta, finishReason: "stop" });
+      return { content: fullContent, thinking: fullThinking, usage: null, meta };
     } catch (error) {
       throw error.name === "AbortError" ? new Error("Request cancelled") : error;
     } finally {

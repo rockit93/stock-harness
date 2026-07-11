@@ -7,9 +7,10 @@ import { QuantModule } from "../modules/quant/quant.module";
 import { RolesModule } from "../modules/roles/roles.module";
 import { SettingsModule } from "../modules/settings/settings.module";
 import { SubscriptionsModule } from "../modules/subscriptions/subscriptions.module";
+import { BacktestStrategiesModule } from "./backtest-strategies/backtest-strategies.module";
 
 @Module({
-  imports: [AuthModule, SettingsModule, QuantModule, SubscriptionsModule, LabelStrategiesModule, RolesModule, PiModule],
+  imports: [AuthModule, SettingsModule, QuantModule, BacktestStrategiesModule, SubscriptionsModule, LabelStrategiesModule, RolesModule, PiModule],
   controllers: [HealthController],
 })
 export class AppModule {}

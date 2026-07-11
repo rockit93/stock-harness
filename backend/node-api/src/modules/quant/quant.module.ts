@@ -3,11 +3,12 @@ import { AuthModule } from "../auth/auth.module";
 import { SettingsModule } from "../settings/settings.module";
 import { PythonCoreService } from "./python-core.service";
 import { QuantController } from "./quant.controller";
+import { BacktestStrategiesRepository } from "../backtest-strategies/backtest-strategies.repository";
 
 @Module({
   imports: [AuthModule, SettingsModule],
   controllers: [QuantController],
-  providers: [PythonCoreService],
-  exports: [PythonCoreService],
+  providers: [PythonCoreService, BacktestStrategiesRepository],
+  exports: [PythonCoreService, BacktestStrategiesRepository],
 })
 export class QuantModule {}

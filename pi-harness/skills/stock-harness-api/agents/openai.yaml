@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stock Harness API"
+  short_description: "调用和管理 Stock Harness 平台 HTTP API"
+  default_prompt: "使用 $stock-harness-api 查询或管理 Stock Harness 平台数据。"

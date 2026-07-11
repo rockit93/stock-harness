@@ -22,6 +22,13 @@ RUNTIME_DIR = ROOT_DIR / ".runtime"
 os.environ["NPM_CONFIG_CACHE"] = str(NPM_CACHE_DIR)
 
 SERVICES = {
+    "ollama": {
+        "name": "Ollama",
+        "command": ["ollama", "serve"],
+        "cwd": ROOT_DIR,
+        "port": 11434,
+        "url": "http://127.0.0.1:11434",
+    },
     "python-core": {
         "name": "Python Core",
         "command": [sys.executable, str(ROOT_DIR / "backend" / "python-core" / "start.py")],
@@ -60,7 +67,12 @@ def parse_args() -> argparse.Namespace:
 
 def selected_services(service: str) -> list[tuple[str, dict[str, Path | str]]]:
     if service == "all":
-        return list(SERVICES.items())
+        services = [(key, config) for key, config in SERVICES.items() if key != "ollama"]
+        if ollama_command() is not None:
+            services.insert(0, ("ollama", SERVICES["ollama"]))
+        return services
+    if service == "ollama" and ollama_command() is None:
+        raise RuntimeError("Ollama was not found. Install Ollama first.")
     return [(service, SERVICES[service])]
 
 
@@ -77,6 +89,17 @@ def npm_command() -> str:
     return command
 
 
+def ollama_command() -> str | None:
+    command = shutil.which("ollama.exe" if os.name == "nt" else "ollama") or shutil.which("ollama")
+    if command is not None or os.name != "nt":
+        return command
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+    candidate = Path(local_app_data) / "Programs" / "Ollama" / "ollama.exe"
+    return str(candidate) if candidate.is_file() else None
+
+
 def ensure_node_modules(cwd: Path) -> None:
     if (cwd / "node_modules").exists():
         return
@@ -87,6 +110,8 @@ def service_command(config: dict[str, object]) -> list[str]:
     command = list(config["command"])  # type: ignore[arg-type]
     if command[0] == "npm":
         command[0] = npm_command()
+    elif command[0] == "ollama":
+        command[0] = ollama_command() or command[0]
     return command
 
 
@@ -170,6 +195,11 @@ def stop_process(process: subprocess.Popen[bytes]) -> None:
 def main() -> int:
     args = parse_args()
     services = selected_services(args.service)
+    if any(key == "ollama" for key, _ in services) and port_is_busy(11434):
+        print("Ollama is already running on http://127.0.0.1:11434; using the existing service.")
+        services = [(key, config) for key, config in services if key != "ollama"]
+    if not services:
+        return 0
     service_map = dict(services)
     owners = claim_services(services)
     processes: dict[str, subprocess.Popen[bytes]] = {}

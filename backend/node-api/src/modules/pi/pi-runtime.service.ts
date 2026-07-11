@@ -15,6 +15,7 @@ Pi has a built-in Futu OpenAPI skill for market data and quant research.
 export type PiStreamEvent =
   | { type: "meta"; conversationId: number; sessionId: number; model: string; role: string; roleId: number | null; route: "mentioned" | "selected" | "auto" | "personal"; skills: string[]; plugins: string[] }
   | { type: "delta"; content: string }
+  | { type: "thinking"; content: string }
   | { type: "done"; conversationId: number; sessionId: number }
   | { type: "error"; message: string };
 
@@ -85,6 +86,8 @@ export class PiRuntimeService {
     try {
       for await (const payload of modelSettings.provider === "ollama" ? this.readNdjson(response) : this.readSse(response)) {
         if (payload.error) throw new Error(String(payload.error));
+        const thinking = String(payload.thinking ?? payload.message?.thinking ?? payload.choices?.[0]?.delta?.reasoning_content ?? payload.choices?.[0]?.delta?.reasoning ?? "");
+        if (thinking) emit({ type: "thinking", content: thinking });
         const content = String(payload.message?.content ?? payload.choices?.[0]?.delta?.content ?? "");
         if (content) {
           assistant += content;
@@ -183,7 +186,7 @@ export class PiRuntimeService {
     while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value, { stream: !done }); const lines = buffer.split("\n"); buffer = lines.pop() ?? ""; for (const line of lines) { const data = line.trim().replace(/^data:\s*/, ""); if (data && data !== "[DONE]") yield JSON.parse(data); } if (done) break; }
   }
 
-  private async *readNdjson(response: Response): AsyncGenerator<{ error?: unknown; message?: { content?: unknown }; choices?: any[] }> {
+  private async *readNdjson(response: Response): AsyncGenerator<{ error?: unknown; thinking?: unknown; message?: { content?: unknown; thinking?: unknown }; choices?: any[] }> {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";

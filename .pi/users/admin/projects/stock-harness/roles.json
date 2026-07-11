@@ -8,7 +8,13 @@
       "name": "策略研究员",
       "responsibility": "把用户的策略想法拆成可回测的规则和参数。",
       "directory": "users\\admin\\roles\\2-role"
+    },
+    {
+      "id": 3,
+      "name": "回测研究院",
+      "responsibility": "回测研究工作",
+      "directory": "users\\admin\\roles\\3-role"
     }
   ],
-  "updatedAt": "2026-07-11T18:17:30.653Z"
+  "updatedAt": "2026-07-11T20:39:38.961Z"
 }

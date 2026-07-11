@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 from .data import BarInterval, DataSource, Market, load_daily_bars, lookup_symbols, test_futu_connection
 from .engine import run_backtest
 from .fundamentals import load_fundamentals
+from .json_strategy import JsonRuleStrategy, validate_strategy_definition
 from .strategies import STRATEGIES
+from .strategies import StrategySpec
 
 
 app = FastAPI(title="stock-harness Python Core", version="0.1.0")
@@ -54,6 +56,11 @@ class BacktestRequest(BarsRequest):
     strategy_params: dict[str, Any] = Field(default_factory=dict)
     cash: float = 100000.0
     commission_bps: float = 3.0
+    strategy_definition: dict[str, Any] | None = None
+
+
+class StrategyValidationRequest(BaseModel):
+    definition: dict[str, Any]
 
 
 def _series_payload(series, limit: int = 500) -> list[dict[str, Any]]:
@@ -85,6 +92,15 @@ def strategies() -> list[dict[str, Any]]:
         }
         for key, spec in STRATEGIES.items()
     ]
+
+
+@app.post("/strategies/validate")
+def validate_strategy(request: StrategyValidationRequest) -> dict[str, Any]:
+    try:
+        validate_strategy_definition(request.definition)
+        return {"ok": True, "definition": request.definition}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/bars")
@@ -156,11 +172,18 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="start must be earlier than end")
 
     spec = STRATEGIES.get(request.strategy)
-    if not spec:
+    params = dict(spec.default_params) if spec else {}
+    if request.strategy_definition is not None:
+        try:
+            definition = validate_strategy_definition(request.strategy_definition)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        spec = StrategySpec(request.strategy, request.strategy, JsonRuleStrategy, {})
+        params = {"definition": definition}
+    elif not spec:
         raise HTTPException(status_code=400, detail=f"unknown strategy: {request.strategy}")
-
-    params = dict(spec.default_params)
-    params.update(request.strategy_params)
+    else:
+        params.update(request.strategy_params)
 
     try:
         frame = load_daily_bars(

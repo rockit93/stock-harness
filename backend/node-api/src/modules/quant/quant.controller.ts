@@ -2,6 +2,7 @@ import { Body, Controller, Get, Inject, Post, Req, UseGuards } from "@nestjs/com
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
 import { SettingsRepository } from "../settings/settings.repository";
 import { PythonCoreService } from "./python-core.service";
+import { BacktestStrategiesRepository } from "../backtest-strategies/backtest-strategies.repository";
 
 @UseGuards(AuthGuard)
 @Controller()
@@ -9,11 +10,16 @@ export class QuantController {
   constructor(
     @Inject(PythonCoreService) private readonly pythonCore: PythonCoreService,
     @Inject(SettingsRepository) private readonly settings: SettingsRepository,
+    @Inject(BacktestStrategiesRepository) private readonly customStrategies: BacktestStrategiesRepository,
   ) {}
 
   @Get("strategies")
-  strategies() {
-    return this.pythonCore.strategies();
+  async strategies(@Req() req: AuthenticatedRequest) {
+    const builtins = await this.pythonCore.strategies() as Array<Record<string, unknown>>;
+    return [
+      ...builtins.map((item) => ({ ...item, source: "builtin" })),
+      ...this.customStrategies.list(Number(req.user.sub)),
+    ];
   }
 
   @Post("bars")
@@ -33,7 +39,10 @@ export class QuantController {
 
   @Post("backtest")
   backtest(@Req() req: AuthenticatedRequest, @Body() body: unknown) {
-    return this.pythonCore.backtest(this.withDataSourceSettings(req, body));
+    const payload = this.withDataSourceSettings(req, body) as Record<string, unknown>;
+    const custom = this.customStrategies.getByKey(Number(req.user.sub), String(payload.strategy ?? ""));
+    if (custom) payload.strategy_definition = custom.definition;
+    return this.pythonCore.backtest(payload);
   }
 
   private withDataSourceSettings(req: AuthenticatedRequest, body: unknown) {
