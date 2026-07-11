@@ -13,6 +13,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@anvaka/vue-llm": "^0.4.1",
     "@vitejs/plugin-vue": "^6.0.1",
     "klinecharts": "^9.8.12",
     "markdown-it": "^14.3.0",
