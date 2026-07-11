@@ -1,0 +1,27 @@
+# Quant Research Skill
+
+Use this skill when developing, reviewing, or extending the local quant assistant.
+
+## Workflow
+
+1. Identify the target market: A-share, Hong Kong, or US.
+2. Check data adapter behavior before changing strategy logic.
+3. Implement strategies as Backtrader strategies in `src/quant_lab/strategies.py`.
+4. Register strategies with `StrategySpec`.
+5. Run syntax checks and, when possible, a small deterministic backtest.
+6. Report research limitations clearly.
+
+## Guardrails
+
+- Never call a backtest result a guaranteed edge.
+- Do not add live trading without explicit user approval.
+- Do not mix adjusted A-share data with unadjusted Yahoo data in one portfolio without documenting the normalization.
+- Prefer small, auditable strategies over opaque model predictions.
+
+## Extension Ideas
+
+- Add portfolio-level multi-asset backtesting.
+- Add factor research with IC, rank IC, and grouped returns.
+- Add walk-forward tests.
+- Add paper trading adapters.
+- Add a RAG document store for announcements, filings, and research notes.

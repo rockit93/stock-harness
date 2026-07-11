@@ -1,0 +1,16 @@
+{
+  "name": "local-quant-assistant-pi-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi skill package for developing the local stock quant assistant.",
+  "license": "MIT",
+  "pi": {
+    "skills": [
+      "skills/quant-research/SKILL.md"
+    ],
+    "prompts": [
+      "prompts/review-backtest.md",
+      "prompts/add-strategy.md"
+    ]
+  }
+}
