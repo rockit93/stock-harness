@@ -6,3 +6,5 @@ akshare>=1.14
 backtrader>=1.9.78.123
 yfinance>=0.2.40
 requests>=2.32
+futu-api>=9.4
+fastapi>=0.115

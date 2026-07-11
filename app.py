@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.quant_lab.ai import ask_ollama, build_research_prompt
-from src.quant_lab.data import Market, load_daily_bars
+from src.quant_lab.data import DataSource, Market, load_daily_bars
 from src.quant_lab.engine import run_backtest
 from src.quant_lab.metrics import format_money, format_pct
 from src.quant_lab.strategies import STRATEGIES
@@ -24,6 +24,11 @@ MARKETS = {
     "A 股": Market.A_SHARE,
     "港股": Market.HK,
     "美股": Market.US,
+}
+
+DATA_SOURCES = {
+    "自动数据源": DataSource.AUTO,
+    "Futu OpenD": DataSource.FUTU,
 }
 
 STRATEGY_LABELS = {
@@ -141,7 +146,17 @@ with st.sidebar:
     symbol = st.text_input("股票代码", value=default_symbol, help="示例：A 股 600519，港股 00700，美股 AAPL")
     start = st.date_input("开始日期", value=date(2020, 1, 1))
     end = st.date_input("结束日期", value=date.today())
-    adjust = st.selectbox("复权方式", ["qfq", "hfq", "none"], index=0, help="A 股常用 qfq 前复权；港股和美股可保持默认。")
+    adjust = st.selectbox("复权方式", ["qfq", "hfq", "none"], index=0, help="A 股常用 qfq 前复权。")
+
+    st.header("数据源")
+    data_source_label = st.selectbox("行情来源", list(DATA_SOURCES.keys()), index=0)
+    data_source = DATA_SOURCES[data_source_label]
+    futu_host = "127.0.0.1"
+    futu_port = 11111
+    if data_source == DataSource.FUTU:
+        futu_host = st.text_input("Futu OpenD Host", value="127.0.0.1")
+        futu_port = st.number_input("Futu OpenD Port", min_value=1, max_value=65535, value=11111, step=1)
+        st.caption("使用 Futu 前，请先启动富途 OpenD，并确认已登录及开通对应市场行情权限。")
 
     st.header("回测设置")
     strategy_key = st.selectbox(
@@ -179,6 +194,9 @@ try:
             start=start,
             end=end,
             adjust="" if adjust == "none" else adjust,
+            data_source=data_source,
+            futu_host=futu_host,
+            futu_port=int(futu_port),
         )
 
     with st.spinner("正在运行回测..."):

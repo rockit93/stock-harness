@@ -11,3 +11,7 @@ streamlit.*.log
 .env.*
 dist/
 build/
+node_modules/
+npm-debug.log*
+vue-web/dist/
+node-api/data/

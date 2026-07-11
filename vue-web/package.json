@@ -1,0 +1,22 @@
+{
+  "name": "stock-harness-vue-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Separated Vue web frontend for stock-harness.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.1.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+  }
+}

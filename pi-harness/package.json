@@ -6,7 +6,8 @@
   "license": "MIT",
   "pi": {
     "skills": [
-      "skills/quant-research/SKILL.md"
+      "skills/quant-research/SKILL.md",
+      "skills/futu-data-source/SKILL.md"
     ],
     "prompts": [
       "prompts/review-backtest.md",

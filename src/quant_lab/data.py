@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from io import StringIO
 
 import pandas as pd
-import requests
 
 
 class Market(str, Enum):
     A_SHARE = "A Share"
     HK = "Hong Kong"
     US = "US"
+
+
+class DataSource(str, Enum):
+    AUTO = "auto"
+    FUTU = "futu"
 
 
 def _normalize_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
@@ -30,6 +33,12 @@ def _normalize_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     return output.dropna(subset=["open", "high", "low", "close"])
 
 
+def _filter_dates(frame: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    return frame[(frame.index >= start_ts) & (frame.index <= end_ts)]
+
+
 def _load_a_share(symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
     import akshare as ak
 
@@ -43,24 +52,19 @@ def _load_a_share(symbol: str, start: date, end: date, adjust: str) -> pd.DataFr
     if raw.empty:
         raise RuntimeError("AkShare returned no A-share data.")
 
-    rename = {
-        "日期": "date",
-        "开盘": "open",
-        "收盘": "close",
-        "最高": "high",
-        "最低": "low",
-        "成交量": "volume",
-    }
-    raw = raw.rename(columns=rename)
+    raw = raw.rename(
+        columns={
+            "日期": "date",
+            "开盘": "open",
+            "收盘": "close",
+            "最高": "high",
+            "最低": "low",
+            "成交量": "volume",
+        }
+    )
     raw["date"] = pd.to_datetime(raw["date"])
     raw = raw.set_index("date")
     return _normalize_ohlcv(raw)
-
-
-def _filter_dates(frame: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
-    start_ts = pd.Timestamp(start)
-    end_ts = pd.Timestamp(end)
-    return frame[(frame.index >= start_ts) & (frame.index <= end_ts)]
 
 
 def _load_ak_hk_daily(symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
@@ -106,56 +110,87 @@ def _load_yfinance(ticker: str, start: date, end: date) -> pd.DataFrame:
     return _normalize_ohlcv(raw)
 
 
-def _load_stooq(ticker: str, start: date, end: date) -> pd.DataFrame:
-    url = "https://stooq.com/q/d/l/"
-    response = requests.get(
-        url,
-        params={
-            "s": ticker.lower(),
-            "d1": start.strftime("%Y%m%d"),
-            "d2": end.strftime("%Y%m%d"),
-            "i": "d",
-        },
-        headers={"User-Agent": "local-quant-assistant/0.1"},
-        timeout=30,
-    )
-    response.raise_for_status()
-    raw = pd.read_csv(StringIO(response.text))
-    if raw.empty or "Date" not in raw.columns:
-        raise RuntimeError(f"Stooq returned no data for {ticker}.")
-
-    raw = raw.rename(
-        columns={
-            "Date": "date",
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume",
-        }
-    )
-    raw["date"] = pd.to_datetime(raw["date"])
-    raw = raw.set_index("date")
-    return _normalize_ohlcv(raw)
-
-
 def _hk_ticker(symbol: str) -> str:
     clean = symbol.upper().replace(".HK", "").strip()
     return f"{clean.zfill(4)}.HK"
 
 
-def _stooq_ticker(market: Market, symbol: str) -> str:
-    clean = symbol.lower().strip()
+def _a_share_futu_code(symbol: str) -> str:
+    clean = symbol.upper().replace("SH.", "").replace("SZ.", "").strip()
+    if clean.startswith(("5", "6", "9")):
+        return f"SH.{clean}"
+    return f"SZ.{clean}"
+
+
+def _futu_code(market: Market, symbol: str) -> str:
+    clean = symbol.upper().strip()
+    if market == Market.A_SHARE:
+        return _a_share_futu_code(clean)
     if market == Market.HK:
-        clean = clean.replace(".hk", "").zfill(4)
-        return f"{clean}.hk"
+        return f"HK.{clean.replace('HK.', '').replace('.HK', '').zfill(5)}"
     if market == Market.US:
-        clean = clean.replace(".us", "")
-        return f"{clean}.us"
-    raise ValueError(f"Unsupported Stooq market: {market}")
+        return f"US.{clean.replace('US.', '').replace('.US', '')}"
+    raise ValueError(f"Unsupported market for Futu: {market}")
 
 
-def load_daily_bars(market: Market, symbol: str, start: date, end: date, adjust: str = "qfq") -> pd.DataFrame:
+def _futu_adjust(adjust: str):
+    from futu import AuType
+
+    if adjust == "qfq":
+        return AuType.QFQ
+    if adjust == "hfq":
+        return AuType.HFQ
+    return AuType.NONE
+
+
+def _load_futu_daily(
+    market: Market,
+    symbol: str,
+    start: date,
+    end: date,
+    adjust: str,
+    host: str,
+    port: int,
+) -> pd.DataFrame:
+    try:
+        from futu import KLType, OpenQuoteContext, RET_OK
+    except ImportError as exc:
+        raise RuntimeError("未安装 futu-api。请运行 pip install futu-api 后重试。") from exc
+
+    quote_ctx = OpenQuoteContext(host=host, port=port)
+    code = _futu_code(market, symbol)
+    frames = []
+    page_req_key = None
+
+    try:
+        while True:
+            ret, data, page_req_key = quote_ctx.request_history_kline(
+                code=code,
+                start=start.isoformat(),
+                end=end.isoformat(),
+                ktype=KLType.K_DAY,
+                autype=_futu_adjust(adjust),
+                page_req_key=page_req_key,
+            )
+            if ret != RET_OK:
+                raise RuntimeError(f"Futu OpenD 返回错误: {data}")
+            frames.append(data)
+            if not page_req_key:
+                break
+    finally:
+        quote_ctx.close()
+
+    raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if raw.empty:
+        raise RuntimeError(f"Futu OpenD returned no data for {code}.")
+
+    raw = raw.rename(columns={"time_key": "date"})
+    raw["date"] = pd.to_datetime(raw["date"])
+    raw = raw.set_index("date")
+    return _normalize_ohlcv(raw)
+
+
+def _load_auto_daily(market: Market, symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
     if market == Market.A_SHARE:
         return _load_a_share(symbol=symbol.strip(), start=start, end=end, adjust=adjust)
     if market == Market.HK:
@@ -169,3 +204,26 @@ def load_daily_bars(market: Market, symbol: str, start: date, end: date, adjust:
         except Exception:
             return _load_yfinance(symbol.upper().strip(), start=start, end=end)
     raise ValueError(f"Unsupported market: {market}")
+
+
+def load_daily_bars(
+    market: Market,
+    symbol: str,
+    start: date,
+    end: date,
+    adjust: str = "qfq",
+    data_source: DataSource = DataSource.AUTO,
+    futu_host: str = "127.0.0.1",
+    futu_port: int = 11111,
+) -> pd.DataFrame:
+    if data_source == DataSource.FUTU:
+        return _load_futu_daily(
+            market=market,
+            symbol=symbol,
+            start=start,
+            end=end,
+            adjust=adjust,
+            host=futu_host,
+            port=futu_port,
+        )
+    return _load_auto_daily(market=market, symbol=symbol, start=start, end=end, adjust=adjust)
