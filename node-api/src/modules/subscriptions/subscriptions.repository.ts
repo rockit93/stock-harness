@@ -9,8 +9,19 @@ type SubscriptionRow = {
   user_id: number;
   market: string;
   symbol: string;
+  stock_name: string | null;
   name: string | null;
+  remark: string | null;
+  subscribed_by: string | null;
   created_at: string;
+};
+
+type SubscriptionBody = {
+  market?: string;
+  symbol?: string;
+  stockName?: string;
+  name?: string;
+  remark?: string;
 };
 
 @Injectable()
@@ -33,19 +44,29 @@ export class SubscriptionsRepository {
         UNIQUE(user_id, market, symbol)
       );
     `);
+    this.ensureColumn("subscriptions", "stock_name", "TEXT");
+    this.ensureColumn("subscriptions", "remark", "TEXT");
+    this.ensureColumn("subscriptions", "subscribed_by", "TEXT");
+    this.db.exec("UPDATE subscriptions SET remark = name WHERE remark IS NULL AND name IS NOT NULL;");
   }
 
   list(userId: number) {
     const rows = this.db
-      .prepare("SELECT id, user_id, market, symbol, name, created_at FROM subscriptions WHERE user_id = ? ORDER BY market, symbol")
+      .prepare(
+        `SELECT id, user_id, market, symbol, stock_name, name, remark, subscribed_by, created_at
+         FROM subscriptions
+         WHERE user_id = ?
+         ORDER BY created_at DESC, id DESC`,
+      )
       .all(userId) as SubscriptionRow[];
     return rows.map((row) => this.mapRow(row));
   }
 
-  create(userId: number, body: { market?: string; symbol?: string; name?: string }) {
+  create(userId: number, subscribedBy: string, body: SubscriptionBody) {
     const market = String(body.market ?? "").trim();
     const symbol = String(body.symbol ?? "").trim().toUpperCase();
-    const name = String(body.name ?? "").trim() || null;
+    const stockName = String(body.stockName ?? body.name ?? "").trim();
+    const remark = String(body.remark ?? "").trim() || null;
 
     if (!["A Share", "Hong Kong", "US"].includes(market)) {
       throw new BadRequestException("市场必须是 A Share、Hong Kong 或 US");
@@ -53,13 +74,30 @@ export class SubscriptionsRepository {
     if (!symbol) {
       throw new BadRequestException("股票代码不能为空");
     }
+    if (!stockName) {
+      throw new BadRequestException("股票名称不能为空，请先查询或手动填写");
+    }
 
     try {
       const createdAt = new Date().toISOString();
       const result = this.db
-        .prepare("INSERT INTO subscriptions (user_id, market, symbol, name, created_at) VALUES (?, ?, ?, ?, ?)")
-        .run(userId, market, symbol, name, createdAt);
-      return { id: Number(result.lastInsertRowid), userId, market, symbol, name, createdAt };
+        .prepare(
+          `INSERT INTO subscriptions
+           (user_id, market, symbol, stock_name, name, remark, subscribed_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(userId, market, symbol, stockName, remark, remark, subscribedBy, createdAt);
+      return {
+        id: Number(result.lastInsertRowid),
+        userId,
+        market,
+        symbol,
+        stockName,
+        name: remark,
+        remark,
+        subscribedBy,
+        createdAt,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("UNIQUE")) {
@@ -73,13 +111,24 @@ export class SubscriptionsRepository {
     this.db.prepare("DELETE FROM subscriptions WHERE user_id = ? AND id = ?").run(userId, id);
   }
 
+  private ensureColumn(table: string, column: string, type: string) {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type};`);
+    }
+  }
+
   private mapRow(row: SubscriptionRow) {
+    const remark = row.remark ?? row.name ?? null;
     return {
       id: row.id,
       userId: row.user_id,
       market: row.market,
       symbol: row.symbol,
-      name: row.name,
+      stockName: row.stock_name ?? "",
+      name: remark,
+      remark,
+      subscribedBy: row.subscribed_by ?? "",
       createdAt: row.created_at,
     };
   }

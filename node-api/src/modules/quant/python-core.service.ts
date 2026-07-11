@@ -16,6 +16,10 @@ export class PythonCoreService {
     return this.request("/bars", { method: "POST", body });
   }
 
+  lookupSymbols(body: unknown) {
+    return this.request("/symbols/lookup", { method: "POST", body });
+  }
+
   backtest(body: unknown) {
     return this.request("/backtest", { method: "POST", body });
   }

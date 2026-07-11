@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .data import DataSource, Market, load_daily_bars
+from .data import DataSource, Market, load_daily_bars, lookup_symbols, test_futu_connection
 from .engine import run_backtest
 from .strategies import STRATEGIES
 
@@ -21,6 +21,20 @@ class BarsRequest(BaseModel):
     end: date
     adjust: str = "qfq"
     data_source: DataSource = DataSource.AUTO
+    futu_host: str = "127.0.0.1"
+    futu_port: int = 11111
+
+
+class SymbolLookupRequest(BaseModel):
+    market: Market = Market.A_SHARE
+    keyword: str = ""
+    limit: int = 8
+    data_source: DataSource = DataSource.AUTO
+    futu_host: str = "127.0.0.1"
+    futu_port: int = 11111
+
+
+class FutuConnectionRequest(BaseModel):
     futu_host: str = "127.0.0.1"
     futu_port: int = 11111
 
@@ -81,6 +95,32 @@ def bars(request: BarsRequest) -> dict[str, Any]:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {"bars": _frame_payload(frame)}
+
+
+@app.post("/symbols/lookup")
+def symbols_lookup(request: SymbolLookupRequest) -> dict[str, Any]:
+    limit = max(1, min(request.limit, 20))
+    try:
+        symbols = lookup_symbols(
+            market=request.market,
+            keyword=request.keyword,
+            limit=limit,
+            data_source=request.data_source,
+            futu_host=request.futu_host,
+            futu_port=request.futu_port,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {"symbols": symbols}
+
+
+@app.post("/futu/test-connection")
+def futu_test_connection(request: FutuConnectionRequest) -> dict[str, Any]:
+    try:
+        return test_futu_connection(host=request.futu_host, port=request.futu_port)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/backtest")

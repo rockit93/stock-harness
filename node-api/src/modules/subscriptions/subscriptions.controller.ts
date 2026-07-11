@@ -5,7 +5,9 @@ import { SubscriptionsRepository } from "./subscriptions.repository";
 type SubscriptionBody = {
   market?: string;
   symbol?: string;
+  stockName?: string;
   name?: string;
+  remark?: string;
 };
 
 @UseGuards(AuthGuard)
@@ -20,7 +22,7 @@ export class SubscriptionsController {
 
   @Post()
   create(@Req() req: AuthenticatedRequest, @Body() body: SubscriptionBody) {
-    return this.subscriptions.create(Number(req.user.sub), body);
+    return this.subscriptions.create(Number(req.user.sub), req.user.username, body);
   }
 
   @Delete(":id")

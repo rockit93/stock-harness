@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from enum import Enum
 
 import pandas as pd
@@ -19,6 +19,16 @@ class DataSource(str, Enum):
 
 def _normalize_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
+    column_aliases = {
+        "日期": "date",
+        "开盘": "open",
+        "最高": "high",
+        "最低": "low",
+        "收盘": "close",
+        "成交量": "volume",
+        "成交额": "amount",
+    }
+    frame = frame.rename(columns={column: column_aliases.get(str(column).strip(), column) for column in frame.columns})
     frame.columns = [str(column).lower().strip().replace(" ", "_") for column in frame.columns]
     required = ["open", "high", "low", "close", "volume"]
     missing = [column for column in required if column not in frame.columns]
@@ -43,7 +53,7 @@ def _load_a_share(symbol: str, start: date, end: date, adjust: str) -> pd.DataFr
     import akshare as ak
 
     raw = ak.stock_zh_a_hist(
-        symbol=symbol,
+        symbol=normalize_symbol(Market.A_SHARE, symbol),
         period="daily",
         start_date=start.strftime("%Y%m%d"),
         end_date=end.strftime("%Y%m%d"),
@@ -52,17 +62,7 @@ def _load_a_share(symbol: str, start: date, end: date, adjust: str) -> pd.DataFr
     if raw.empty:
         raise RuntimeError("AkShare returned no A-share data.")
 
-    raw = raw.rename(
-        columns={
-            "日期": "date",
-            "开盘": "open",
-            "收盘": "close",
-            "最高": "high",
-            "最低": "low",
-            "成交量": "volume",
-        }
-    )
-    raw["date"] = pd.to_datetime(raw["date"])
+    raw["date"] = pd.to_datetime(raw["日期"])
     raw = raw.set_index("date")
     return _normalize_ohlcv(raw)
 
@@ -70,7 +70,7 @@ def _load_a_share(symbol: str, start: date, end: date, adjust: str) -> pd.DataFr
 def _load_ak_hk_daily(symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
     import akshare as ak
 
-    raw = ak.stock_hk_daily(symbol=symbol.replace(".HK", "").zfill(5), adjust=adjust)
+    raw = ak.stock_hk_daily(symbol=normalize_symbol(Market.HK, symbol), adjust=adjust)
     if raw.empty:
         raise RuntimeError(f"AkShare returned no Hong Kong data for {symbol}.")
 
@@ -82,7 +82,7 @@ def _load_ak_hk_daily(symbol: str, start: date, end: date, adjust: str) -> pd.Da
 def _load_ak_us_daily(symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
     import akshare as ak
 
-    raw = ak.stock_us_daily(symbol=symbol.upper().replace(".US", ""), adjust=adjust)
+    raw = ak.stock_us_daily(symbol=normalize_symbol(Market.US, symbol), adjust=adjust)
     if raw.empty:
         raise RuntimeError(f"AkShare returned no US data for {symbol}.")
 
@@ -97,7 +97,7 @@ def _load_yfinance(ticker: str, start: date, end: date) -> pd.DataFrame:
     raw = yf.download(
         ticker,
         start=start.isoformat(),
-        end=end.isoformat(),
+        end=(end + timedelta(days=1)).isoformat(),
         auto_adjust=False,
         progress=False,
         group_by="column",
@@ -110,13 +110,30 @@ def _load_yfinance(ticker: str, start: date, end: date) -> pd.DataFrame:
     return _normalize_ohlcv(raw)
 
 
+def normalize_symbol(market: Market, symbol: str) -> str:
+    clean = symbol.upper().strip()
+    if market == Market.A_SHARE:
+        return clean.replace("SH.", "").replace("SZ.", "")
+    if market == Market.HK:
+        return clean.replace("HK.", "").replace(".HK", "").zfill(5)
+    if market == Market.US:
+        return clean.replace("US.", "").replace(".US", "")
+    return clean
+
+
 def _hk_ticker(symbol: str) -> str:
-    clean = symbol.upper().replace(".HK", "").strip()
-    return f"{clean.zfill(4)}.HK"
+    return f"{normalize_symbol(Market.HK, symbol).zfill(4)}.HK"
+
+
+def _a_share_yahoo_ticker(symbol: str) -> str:
+    clean = normalize_symbol(Market.A_SHARE, symbol)
+    if clean.startswith(("5", "6", "9")):
+        return f"{clean}.SS"
+    return f"{clean}.SZ"
 
 
 def _a_share_futu_code(symbol: str) -> str:
-    clean = symbol.upper().replace("SH.", "").replace("SZ.", "").strip()
+    clean = normalize_symbol(Market.A_SHARE, symbol)
     if clean.startswith(("5", "6", "9")):
         return f"SH.{clean}"
     return f"SZ.{clean}"
@@ -127,9 +144,9 @@ def _futu_code(market: Market, symbol: str) -> str:
     if market == Market.A_SHARE:
         return _a_share_futu_code(clean)
     if market == Market.HK:
-        return f"HK.{clean.replace('HK.', '').replace('.HK', '').zfill(5)}"
+        return f"HK.{normalize_symbol(Market.HK, clean)}"
     if market == Market.US:
-        return f"US.{clean.replace('US.', '').replace('.US', '')}"
+        return f"US.{normalize_symbol(Market.US, clean)}"
     raise ValueError(f"Unsupported market for Futu: {market}")
 
 
@@ -191,19 +208,41 @@ def _load_futu_daily(
 
 
 def _load_auto_daily(market: Market, symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
+    errors = []
     if market == Market.A_SHARE:
-        return _load_a_share(symbol=symbol.strip(), start=start, end=end, adjust=adjust)
-    if market == Market.HK:
-        try:
-            return _load_ak_hk_daily(symbol, start=start, end=end, adjust=adjust)
-        except Exception:
-            return _load_yfinance(_hk_ticker(symbol), start=start, end=end)
-    if market == Market.US:
-        try:
-            return _load_ak_us_daily(symbol, start=start, end=end, adjust=adjust)
-        except Exception:
-            return _load_yfinance(symbol.upper().strip(), start=start, end=end)
-    raise ValueError(f"Unsupported market: {market}")
+        for loader in (
+            lambda: _load_a_share(symbol=symbol, start=start, end=end, adjust=adjust),
+            lambda: _load_yfinance(_a_share_yahoo_ticker(symbol), start=start, end=end),
+        ):
+            try:
+                return loader()
+            except Exception as exc:
+                errors.append(str(exc))
+    elif market == Market.HK:
+        for loader in (
+            lambda: _load_ak_hk_daily(symbol, start=start, end=end, adjust=adjust),
+            lambda: _load_yfinance(_hk_ticker(symbol), start=start, end=end),
+        ):
+            try:
+                return loader()
+            except Exception as exc:
+                errors.append(str(exc))
+    elif market == Market.US:
+        for loader in (
+            lambda: _load_ak_us_daily(symbol, start=start, end=end, adjust=adjust),
+            lambda: _load_yfinance(normalize_symbol(Market.US, symbol), start=start, end=end),
+        ):
+            try:
+                return loader()
+            except Exception as exc:
+                errors.append(str(exc))
+    else:
+        raise ValueError(f"Unsupported market: {market}")
+
+    raise RuntimeError(
+        "当前行情数据源连接失败。可以检查本机代理/网络，或启动 Futu OpenD 后把数据源切到 Futu。"
+        f" 原始错误: {' | '.join(errors[-2:])}"
+    )
 
 
 def load_daily_bars(
@@ -227,3 +266,166 @@ def load_daily_bars(
             port=futu_port,
         )
     return _load_auto_daily(market=market, symbol=symbol, start=start, end=end, adjust=adjust)
+
+
+def _market_from_futu_code(code: str) -> Market | None:
+    upper = code.upper()
+    if upper.startswith(("SH.", "SZ.")):
+        return Market.A_SHARE
+    if upper.startswith("HK."):
+        return Market.HK
+    if upper.startswith("US."):
+        return Market.US
+    return None
+
+
+def _record(market: Market, symbol: str, name: str, source: str, raw_code: str | None = None) -> dict[str, str]:
+    return {
+        "market": market.value,
+        "symbol": normalize_symbol(market, symbol),
+        "name": name,
+        "source": source,
+        "raw_code": raw_code or symbol,
+    }
+
+
+POPULAR_SYMBOLS: dict[tuple[Market, str], str] = {
+    (Market.A_SHARE, "600519"): "贵州茅台",
+    (Market.A_SHARE, "000001"): "平安银行",
+    (Market.A_SHARE, "601318"): "中国平安",
+    (Market.A_SHARE, "600036"): "招商银行",
+    (Market.A_SHARE, "300750"): "宁德时代",
+    (Market.HK, "00700"): "腾讯控股",
+    (Market.HK, "09988"): "阿里巴巴-W",
+    (Market.HK, "03690"): "美团-W",
+    (Market.US, "AAPL"): "Apple",
+    (Market.US, "TSLA"): "Tesla",
+    (Market.US, "NVDA"): "NVIDIA",
+    (Market.US, "MSFT"): "Microsoft",
+}
+
+
+def _lookup_popular(market: Market, keyword: str, limit: int) -> list[dict[str, str]]:
+    text = keyword.strip().upper()
+    matches = []
+    for (item_market, symbol), name in POPULAR_SYMBOLS.items():
+        if item_market != market:
+            continue
+        if text in symbol.upper() or keyword.strip().lower() in name.lower():
+            matches.append(_record(item_market, symbol, name, "builtin"))
+    return matches[:limit]
+
+
+def _lookup_futu(keyword: str, host: str, port: int, limit: int) -> list[dict[str, str]]:
+    try:
+        from futu import OpenQuoteContext, RET_OK
+    except ImportError:
+        return []
+
+    quote_ctx = OpenQuoteContext(host=host, port=port)
+    try:
+        ret, data = quote_ctx.get_search_quote(keyword, max_count=limit)
+        if ret != RET_OK or data.empty:
+            return []
+        records = []
+        for _, row in data.iterrows():
+            code = str(row.get("code", "")).strip()
+            market = _market_from_futu_code(code)
+            name = str(row.get("name", "")).strip()
+            if market and code and name:
+                records.append(_record(market, code, name, "futu", code))
+        return records[:limit]
+    except Exception:
+        return []
+    finally:
+        quote_ctx.close()
+
+
+def test_futu_connection(host: str = "127.0.0.1", port: int = 11111) -> dict[str, str]:
+    try:
+        from futu import OpenQuoteContext, RET_OK
+    except ImportError as exc:
+        raise RuntimeError("未安装 futu-api。请运行 pip install futu-api 后重试。") from exc
+
+    quote_ctx = OpenQuoteContext(host=host, port=port)
+    try:
+        ret, data = quote_ctx.get_global_state()
+        if ret != RET_OK:
+            raise RuntimeError(f"Futu OpenD 返回错误: {data}")
+        return {"status": "ok", "host": host, "port": str(port)}
+    finally:
+        quote_ctx.close()
+
+
+def _lookup_akshare(market: Market, keyword: str, limit: int) -> list[dict[str, str]]:
+    try:
+        import akshare as ak
+    except ImportError:
+        return []
+
+    text = keyword.strip().upper()
+    try:
+        if market == Market.A_SHARE:
+            frame = ak.stock_info_a_code_name()
+            code_column = "code"
+            name_column = "name"
+        elif market == Market.HK:
+            frame = ak.stock_hk_spot_em()
+            code_column = "代码"
+            name_column = "名称"
+        elif market == Market.US:
+            frame = ak.stock_us_spot_em()
+            code_column = "代码"
+            name_column = "名称"
+        else:
+            return []
+    except Exception:
+        return []
+
+    if frame.empty:
+        return []
+
+    records = []
+    for _, row in frame.iterrows():
+        symbol = str(row.get(code_column, "")).strip().upper()
+        name = str(row.get(name_column, "")).strip()
+        if not symbol or not name:
+            continue
+        if text in symbol.upper() or keyword.strip().lower() in name.lower():
+            records.append(_record(market, symbol, name, "akshare"))
+        if len(records) >= limit:
+            break
+    return records
+
+
+def lookup_symbols(
+    market: Market,
+    keyword: str,
+    limit: int = 8,
+    data_source: DataSource = DataSource.AUTO,
+    futu_host: str = "127.0.0.1",
+    futu_port: int = 11111,
+) -> list[dict[str, str]]:
+    clean = keyword.strip()
+    if not clean:
+        return []
+
+    records: list[dict[str, str]] = []
+    if data_source == DataSource.FUTU:
+        records.extend(_lookup_futu(clean, futu_host, futu_port, limit))
+    else:
+        records.extend(_lookup_popular(market, clean, limit))
+        if len(records) < limit:
+            records.extend(_lookup_akshare(market, clean, limit - len(records)))
+        if len(records) < limit:
+            records.extend(_lookup_futu(clean, futu_host, futu_port, limit - len(records)))
+
+    deduped = []
+    seen = set()
+    for record in records:
+        key = (record["market"], record["symbol"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(record)
+    return deduped[:limit]

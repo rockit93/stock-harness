@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
 import { RolesRepository } from "./roles.repository";
 
@@ -21,6 +21,11 @@ export class RolesController {
   @Post()
   create(@Req() req: AuthenticatedRequest, @Body() body: RoleBody) {
     return this.roles.create(Number(req.user.sub), body);
+  }
+
+  @Put(":id/capabilities")
+  updateCapabilities(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: { skillIds?: number[]; pluginIds?: number[] }) {
+    return this.roles.updateCapabilities(Number(req.user.sub), Number(id), body);
   }
 
   @Delete(":id")

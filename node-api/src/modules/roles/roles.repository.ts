@@ -31,6 +31,16 @@ export class RolesRepository {
         system_prompt TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS role_skills (
+        role_id INTEGER NOT NULL,
+        skill_id INTEGER NOT NULL,
+        PRIMARY KEY (role_id, skill_id)
+      );
+      CREATE TABLE IF NOT EXISTS role_plugins (
+        role_id INTEGER NOT NULL,
+        plugin_id INTEGER NOT NULL,
+        PRIMARY KEY (role_id, plugin_id)
+      );
     `);
   }
 
@@ -62,6 +72,35 @@ export class RolesRepository {
 
   remove(userId: number, id: number) {
     this.db.prepare("DELETE FROM agent_roles WHERE user_id = ? AND id = ?").run(userId, id);
+    this.db.prepare("DELETE FROM role_skills WHERE role_id = ?").run(id);
+    this.db.prepare("DELETE FROM role_plugins WHERE role_id = ?").run(id);
+  }
+
+  updateCapabilities(userId: number, id: number, body: { skillIds?: number[]; pluginIds?: number[] }) {
+    const role = this.db.prepare("SELECT id FROM agent_roles WHERE user_id = ? AND id = ?").get(userId, id) as { id: number } | undefined;
+    if (!role) {
+      throw new BadRequestException("角色不存在");
+    }
+
+    const skillIds = this.filterOwnedIds("pi_skills", userId, this.normalizeIds(body.skillIds));
+    const pluginIds = this.filterOwnedIds("pi_plugins", userId, this.normalizeIds(body.pluginIds));
+
+    const insertSkill = this.db.prepare("INSERT OR IGNORE INTO role_skills (role_id, skill_id) VALUES (?, ?)");
+    const insertPlugin = this.db.prepare("INSERT OR IGNORE INTO role_plugins (role_id, plugin_id) VALUES (?, ?)");
+    this.db.prepare("DELETE FROM role_skills WHERE role_id = ?").run(id);
+    this.db.prepare("DELETE FROM role_plugins WHERE role_id = ?").run(id);
+    for (const skillId of skillIds) {
+      insertSkill.run(id, skillId);
+    }
+    for (const pluginId of pluginIds) {
+      insertPlugin.run(id, pluginId);
+    }
+
+    return this.mapRow(
+      this.db
+        .prepare("SELECT id, user_id, name, responsibility, system_prompt, created_at FROM agent_roles WHERE user_id = ? AND id = ?")
+        .get(userId, id) as RoleRow,
+    );
   }
 
   private mapRow(row: RoleRow) {
@@ -72,6 +111,25 @@ export class RolesRepository {
       responsibility: row.responsibility,
       systemPrompt: row.system_prompt,
       createdAt: row.created_at,
+      skillIds: this.listRelationIds("role_skills", "skill_id", row.id),
+      pluginIds: this.listRelationIds("role_plugins", "plugin_id", row.id),
     };
+  }
+
+  private listRelationIds(table: string, idColumn: string, roleId: number) {
+    const rows = this.db.prepare(`SELECT ${idColumn} AS id FROM ${table} WHERE role_id = ?`).all(roleId) as Array<{ id: number }>;
+    return rows.map((row) => row.id);
+  }
+
+  private normalizeIds(value: unknown) {
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0))];
+  }
+
+  private filterOwnedIds(table: string, userId: number, ids: number[]) {
+    if (!ids.length) return [];
+    const rows = this.db.prepare(`SELECT id FROM ${table} WHERE user_id = ?`).all(userId) as Array<{ id: number }>;
+    const owned = new Set(rows.map((row) => row.id));
+    return ids.filter((id) => owned.has(id));
   }
 }
