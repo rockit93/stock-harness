@@ -5,9 +5,21 @@
   "description": "Pi skill package for developing the local stock quant assistant.",
   "license": "MIT",
   "pi": {
+    "runtime": "stock-harness-pi",
+    "version": 1,
+    "roles": [
+      "roles/market-observer.json",
+      "roles/strategy-researcher.json",
+      "roles/backtest-executor.json",
+      "roles/risk-reviewer.json",
+      "roles/report-writer.json"
+    ],
     "skills": [
       "skills/quant-research/SKILL.md",
       "skills/futu-data-source/SKILL.md"
+    ],
+    "plugins": [
+      "plugins/market-summary/plugin.json"
     ],
     "prompts": [
       "prompts/review-backtest.md",

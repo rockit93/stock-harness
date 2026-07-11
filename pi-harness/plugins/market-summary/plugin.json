@@ -1,0 +1,6 @@
+{
+  "name": "行情摘要插件",
+  "description": "读取 Pi Runtime 上下文中的行情、订阅列表和用户输入，输出结构化行情摘要。",
+  "sourceUrl": "local://pi-harness/plugins/market-summary",
+  "entry": "index.js"
+}

@@ -12,6 +12,8 @@ streamlit.*.log
 dist/
 build/
 node_modules/
+.npm-cache/
+.runtime/
 npm-debug.log*
-vue-web/dist/
-node-api/data/
+frontend/web/dist/
+backend/node-api/data/

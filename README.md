@@ -5,35 +5,72 @@
 ## 架构
 
 ```text
-Vue 3 + Vite Web
+frontend/web (Vue 3 + Vite)
     -> x-jwt-token
-NestJS + Fastify Node API
+backend/node-api (NestJS + Fastify)
     -> HTTP JSON
-Python FastAPI Core
+backend/python-core (FastAPI + quant core)
     -> Backtrader / AkShare / Futu
 ```
 
 核心分工：
 
-- `vue-web/`: Vue 3 + Vite 前端，前后端分离
-- `node-api/`: NestJS + Fastify API，登录鉴权、JWT、SQLite 用户库、agent harness 扩展层
-- `src/quant_lab/`: Python 量化核心，行情数据、Backtrader 回测、指标计算
+- `backend/python-core/`: Python 量化核心和 FastAPI 接口，包含行情数据、Backtrader 回测、指标计算
+- `backend/node-api/`: NestJS + Fastify API，登录鉴权、JWT、SQLite 用户库、agent harness 扩展层
+- `frontend/web/`: Vue 3 + Vite 前端，前后端分离
+- `frontend/desktop/`: 桌面端预留目录，待建设
 
 ## 启动
 
-在 PowerShell 里进入项目目录，分别启动三层服务：
+推荐使用根目录的统一入口启动本地开发环境：
 
-```powershell
-cd C:\Users\Administrator\Documents\Codex\2026-07-11\r\outputs\quant-lab
-powershell -ExecutionPolicy Bypass -File .\run_api.ps1
-powershell -ExecutionPolicy Bypass -File .\run_node_api.ps1
-powershell -ExecutionPolicy Bypass -File .\run_vue.ps1
+```bash
+python bootstrap.py
+# 或只启动单个服务
+python bootstrap.py web
 ```
 
-打开 Vue 前端：
+Linux / macOS 可以使用 shell 包装：
 
-```text
-http://127.0.0.1:5173
+```bash
+bash ./bootstrap.sh
+# 或只启动单个服务
+bash ./bootstrap.sh web
+```
+
+Windows PowerShell 也可以使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+# 或只启动单个服务
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -Service web
+```
+
+默认启动的是开发模式，支持热更新：
+
+- Python Core: `uvicorn --reload`
+- Node API: `tsx watch src/main.ts`
+- Vue Web: `vite`
+
+如需单独启动某一层服务：
+
+```bash
+python backend/python-core/start.py
+cd backend/node-api && npm run dev
+cd frontend/web && npm run dev
+```
+
+When services are started through `bootstrap.py` / `bootstrap.ps1`, runtime logs are written under `logs/`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\logs.ps1 all
+powershell -ExecutionPolicy Bypass -File .\logs.ps1 python-core -Follow
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\backend\python-core\start.ps1
+powershell -ExecutionPolicy Bypass -File .\backend\node-api\start.ps1
+powershell -ExecutionPolicy Bypass -File .\frontend\web\start.ps1
 ```
 
 服务端口：
@@ -41,6 +78,33 @@ http://127.0.0.1:5173
 - Python Core: `http://127.0.0.1:8765`
 - Node API: `http://127.0.0.1:8787`
 - Vue Web: `http://127.0.0.1:5173`
+
+如果启动时报端口占用，通常是上一次开发服务还在运行。先确认占用进程：
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765,8787,5173 | Select-Object LocalPort,State,OwningProcess
+```
+
+确认是旧服务后再停止：
+
+```powershell
+Stop-Process -Id <PID>
+```
+
+Linux / macOS：
+
+```bash
+lsof -i :8765 -i :8787 -i :5173
+kill <PID>
+```
+
+也可以只启动没有冲突的单个服务：
+
+```bash
+python bootstrap.py web
+python bootstrap.py node-api
+python bootstrap.py python-core
+```
 
 ## 登录鉴权
 
@@ -61,7 +125,7 @@ GET  /auth/me
 用户数据先存在 SQLite：
 
 ```text
-node-api/data/auth.sqlite
+backend/node-api/data/auth.sqlite
 ```
 
 该目录已加入 `.gitignore`。后续迁移 MongoDB 时，替换 `SqliteUserRepository` 即可。
@@ -90,22 +154,39 @@ Futu 代码格式由系统自动转换：
 ## 项目结构
 
 ```text
-src/quant_lab/
-  api.py                       Python FastAPI Core
-  data.py                      A 股、港股、美股数据适配器，含 Futu OpenD
-  engine.py                    Backtrader 回测入口
-  strategies.py                策略注册表
-  metrics.py                   指标工具
-  ai.py                        本地 Ollama 客户端
-node-api/                      NestJS + Fastify API，SQLite + JWT
-vue-web/                       Vue 3 + Vite 前端
-.pi/AGENTS.md                  Pi 项目上下文
-pi-harness/                    Pi skill 和 prompt 包骨架
+backend/
+  python-core/
+    start.py
+    start.sh
+    start.ps1
+    requirements.txt
+    app.py
+    src/quant_lab/
+      api.py                 Python FastAPI Core
+      data.py                A 股、港股、美股数据适配器，含 Futu OpenD
+      engine.py              Backtrader 回测入口
+      strategies.py          策略注册表
+      metrics.py             指标工具
+      ai.py                  本地 Ollama 客户端
+  node-api/
+    start.sh
+    start.ps1
+    package.json
+    src/                    NestJS + Fastify API，SQLite + JWT
+frontend/
+  web/
+    start.sh
+    start.ps1
+    package.json
+    src/                    Vue 3 + Vite 前端
+  desktop/                  桌面端预留
+.pi/AGENTS.md               Pi 项目上下文
+pi-harness/                 Pi skill 和 prompt 包骨架
 ```
 
 ## 添加策略
 
-在 `src/quant_lab/strategies.py` 里新增 Backtrader 策略，然后注册：
+在 `backend/python-core/src/quant_lab/strategies.py` 里新增 Backtrader 策略，然后注册：
 
 ```python
 STRATEGIES["my_strategy"] = StrategySpec(

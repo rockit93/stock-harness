@@ -8,9 +8,9 @@ The app supports Futu as an optional daily OHLCV data source through `futu-api`.
 
 Relevant files:
 
-- `src/quant_lab/data.py`
-- `app.py`
-- `requirements.txt`
+- `backend/python-core/src/quant_lab/data.py`
+- `backend/python-core/app.py`
+- `backend/python-core/requirements.txt`
 
 ## Requirements
 
