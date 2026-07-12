@@ -342,6 +342,48 @@ def _load_futu_bars(
     return _normalize_ohlcv(raw)
 
 
+def _tushare_code(symbol: str) -> str:
+    clean = normalize_symbol(Market.A_SHARE, symbol)
+    suffix = "SH" if clean.startswith(("5", "6", "9")) else "BJ" if clean.startswith(("4", "8")) else "SZ"
+    return f"{clean}.{suffix}"
+
+
+def _load_tushare(symbol: str, start: date, end: date, adjust: str, token: str) -> pd.DataFrame:
+    if not token.strip():
+        raise RuntimeError("Tushare Token 未配置，请先在数据源管理中配置。")
+    try:
+        import tushare as ts
+    except ImportError as exc:
+        raise RuntimeError("未安装 tushare，请运行 pip install tushare 后重试。") from exc
+    raw = ts.pro_bar(
+        api=ts.pro_api(token.strip()), ts_code=_tushare_code(symbol),
+        start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
+        adj=adjust if adjust in {"qfq", "hfq"} else None,
+    )
+    if raw is None or raw.empty:
+        raise RuntimeError(f"Tushare 未返回 {_tushare_code(symbol)} 的行情数据，请检查 Token 权限和日期范围。")
+    # Tushare Pro uses `vol` for volume while AlphaDock's provider-neutral
+    # schema uses `volume`. Keep this translation at the adapter boundary.
+    raw = raw.rename(columns={"vol": "volume"})
+    raw["date"] = pd.to_datetime(raw["trade_date"])
+    return _normalize_ohlcv(raw.set_index("date"))
+
+
+def test_tushare_connection(token: str) -> dict[str, str | bool]:
+    if not token.strip():
+        raise RuntimeError("请先填写 Tushare Token。")
+    try:
+        import tushare as ts
+    except ImportError as exc:
+        raise RuntimeError("未安装 tushare，请运行 pip install tushare 后重试。") from exc
+    frame = ts.pro_api(token.strip()).trade_cal(
+        exchange="SSE", start_date=date.today().strftime("%Y%m%d"), end_date=date.today().strftime("%Y%m%d")
+    )
+    if frame is None:
+        raise RuntimeError("Tushare 连接未返回结果，请检查 Token 和接口权限。")
+    return {"ok": True, "provider": "tushare"}
+
+
 def _load_auto_daily(market: Market, symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
     errors = []
     if market == Market.A_SHARE:
@@ -381,13 +423,13 @@ def _load_auto_daily(market: Market, symbol: str, start: date, end: date, adjust
 
 
 DEFAULT_PROVIDER_CHAINS: dict[Market, list[str]] = {
-    Market.A_SHARE: ["akshare", "baostock", "yfinance"],
+    Market.A_SHARE: ["akshare", "tushare", "baostock", "yfinance"],
     Market.HK: ["futu", "akshare", "yfinance"],
     Market.US: ["futu", "yfinance", "akshare"],
 }
 
 SUPPORTED_BAR_PROVIDERS: dict[Market, set[str]] = {
-    Market.A_SHARE: {"akshare", "baostock", "futu", "yfinance"},
+    Market.A_SHARE: {"akshare", "tushare", "baostock", "futu", "yfinance"},
     Market.HK: {"akshare", "futu", "yfinance"},
     Market.US: {"akshare", "futu", "yfinance"},
 }
@@ -401,7 +443,7 @@ def _provider_chain(market: Market, provider_chains: dict[str, list[str]] | None
 
 
 def _load_provider_bars(provider: str, market: Market, symbol: str, start: date, end: date,
-    adjust: str, host: str, port: int, interval: BarInterval) -> pd.DataFrame:
+    adjust: str, host: str, port: int, interval: BarInterval, tushare_token: str = "") -> pd.DataFrame:
     if provider == "futu":
         source_interval = BarInterval.DAY if interval in (BarInterval.WEEK, BarInterval.MONTH) else interval
         return _load_futu_bars(market, symbol, start, end, adjust, host, port, source_interval)
@@ -409,6 +451,8 @@ def _load_provider_bars(provider: str, market: Market, symbol: str, start: date,
         raise RuntimeError(f"{provider} 当前只支持日线。")
     if provider == "baostock" and market == Market.A_SHARE:
         return _load_baostock(symbol, start, end, adjust)
+    if provider == "tushare" and market == Market.A_SHARE:
+        return _load_tushare(symbol, start, end, adjust, tushare_token)
     if provider == "akshare":
         if market == Market.A_SHARE:
             return _load_a_share(symbol, start, end, adjust)
@@ -423,11 +467,11 @@ def _load_provider_bars(provider: str, market: Market, symbol: str, start: date,
 
 
 def _load_from_chain(market: Market, symbol: str, start: date, end: date, adjust: str,
-                     host: str, port: int, interval: BarInterval, providers: list[str]) -> pd.DataFrame:
+                     host: str, port: int, interval: BarInterval, providers: list[str], tushare_token: str = "") -> pd.DataFrame:
     errors = []
     for provider in providers:
         try:
-            frame = _load_provider_bars(provider, market, symbol, start, end, adjust, host, port, interval)
+            frame = _load_provider_bars(provider, market, symbol, start, end, adjust, host, port, interval, tushare_token)
             if interval in (BarInterval.WEEK, BarInterval.MONTH):
                 rule = "W-FRI" if interval == BarInterval.WEEK else "ME"
                 frame = frame.copy()
@@ -463,6 +507,7 @@ def load_daily_bars(
     futu_port: int = 11111,
     interval: BarInterval = BarInterval.DAY,
     provider_chains: dict[str, list[str]] | None = None,
+    tushare_token: str = "",
 ) -> pd.DataFrame:
     key = _bar_cache_key(
         market, symbol, start, end, adjust, data_source, futu_host, futu_port, interval, provider_chains
@@ -480,7 +525,7 @@ def load_daily_bars(
 
         providers = ["futu"] if data_source == DataSource.FUTU else _provider_chain(market, provider_chains)
         frame = _load_from_chain(
-            market, symbol, start, end, adjust, futu_host, futu_port, interval, providers
+            market, symbol, start, end, adjust, futu_host, futu_port, interval, providers, tushare_token
         )
         _put_cached_bars(key, frame, interval)
         return frame.copy()

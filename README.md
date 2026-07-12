@@ -140,7 +140,7 @@ backend/node-api/data/auth.sqlite
 
 页面左侧“行情来源”支持：
 
-- 自动数据源：A 股优先 AkShare，港股/美股优先 AkShare，失败时尝试 yfinance
+- 自动数据源：支持为 A 股配置 AkShare、Tushare Pro（需用户 Token）、BaoStock、Futu 与 yfinance 主备顺序；港股/美股按已配置路由降级
 - Futu OpenD：通过本机或局域网 Futu OpenD 获取历史日 K
 
 使用 Futu 前需要：

@@ -166,7 +166,7 @@ const projectColumns = [
   { title: "项目说明", slotName: "description", ellipsis: true, tooltip: true },
   { title: "角色成员", slotName: "roles", width: 180 },
   { title: "公共能力", slotName: "capabilities", width: 145 },
-  { title: "会话数", dataIndex: "conversationCount", width: 90 },
+  { title: "任务数", dataIndex: "conversationCount", width: 90 },
   { title: "更新时间", slotName: "updatedAt", width: 170 },
   { title: "操作", slotName: "actions", width: 250, fixed: "right" },
 ];
@@ -223,6 +223,8 @@ const app = createApp({
         },
         futuHost: "127.0.0.1",
         futuPort: 11111,
+        tushareToken: "",
+        hasTushareToken: false,
         updatedAt: null,
       },
       displaySettings: {
@@ -242,6 +244,7 @@ const app = createApp({
         model: "qwen2.5-coder:14b",
         baseUrl: "http://127.0.0.1:11434",
         apiKeyRef: "",
+        apiKey: "",
         temperature: 0.2,
         maxOutputTokens: 4096,
         contextBudgetTokens: 32768,
@@ -249,6 +252,12 @@ const app = createApp({
         updatedAt: null,
       },
       modelConfigs: [],
+      systemPrivateModels: [],
+      systemOllamaBaseUrl: "http://127.0.0.1:11434",
+      monitoringRange: "month",
+      monitoringScope: "mine",
+      monitoringLoading: false,
+      modelMonitoring: { summary: {}, trend: [], models: [], projects: [], users: [] },
       modelDrawerOpen: false,
       modelTesting: false,
       modelTestMessage: "",
@@ -293,7 +302,7 @@ const app = createApp({
       taskForm: {
         name: "盘后复盘",
         roleId: "",
-        schedule: "manual",
+        schedule: "daily",
         prompt: "总结订阅股票今天的走势、异常波动和明天观察点。",
         modelConfigId: "",
       },
@@ -321,6 +330,7 @@ const app = createApp({
       savedTasks: JSON.parse(localStorage.getItem("stock-harness-pi-tasks") || "[]"),
       taskProjectFilterId: null,
       chatLoading: false,
+      chatRecoveryTimer: null,
       chatSessionId: null,
       chatMessages: [],
       chatReply: "",
@@ -330,6 +340,7 @@ const app = createApp({
       chatSidebarOpen: true,
       expandedProjectIds: JSON.parse(localStorage.getItem("stock-harness-expanded-projects") || "[]"),
       chatHistoryQuery: "",
+      archivedChatsOpen: false,
       chatHistory: JSON.parse(localStorage.getItem("stock-harness-chat-history") || "[]"),
       projectArtifacts: JSON.parse(localStorage.getItem("stock-harness-project-artifacts") || "[]"),
       artifactWorkspaceOpen: false,
@@ -366,6 +377,7 @@ const app = createApp({
       customRangeEnd: isoDate(),
       chartLocale: "zh-CN",
       chartData: {},
+      marketStats: {},
       chartErrors: {},
       fundamentalData: {},
       fundamentalErrors: {},
@@ -414,6 +426,7 @@ const app = createApp({
       const builtins = [
         { key: "akshare", name: "AkShare", protocol: "Python SDK", authType: "none", markets: ["A Share", "Hong Kong"], capabilities: ["bars", "symbols", "fundamentals"], enabled: true, builtin: true },
         { key: "baostock", name: "BaoStock", protocol: "Python SDK", authType: "none", markets: ["A Share"], capabilities: ["bars"], enabled: true, builtin: true },
+        { key: "tushare", name: "Tushare Pro", protocol: "Python SDK", authType: "token", markets: ["A Share"], capabilities: ["bars"], enabled: true, builtin: true },
         { key: "futu", name: "Futu OpenD", protocol: "TCP / OpenD", authType: "none", markets: ["A Share", "Hong Kong", "US"], capabilities: ["bars", "quote", "fundamentals"], enabled: true, builtin: true },
         { key: "yfinance", name: "Yahoo Finance", protocol: "HTTP", authType: "none", markets: ["A Share", "Hong Kong", "US"], capabilities: ["bars", "fundamentals"], enabled: true, builtin: true },
         { key: "sec_edgar", name: "SEC EDGAR", protocol: "HTTP", authType: "none", markets: ["US"], capabilities: ["fundamentals"], enabled: true, builtin: true },
@@ -561,6 +574,7 @@ const app = createApp({
   },
   beforeUnmount() {
     if (this.currentPriceTimer) clearInterval(this.currentPriceTimer);
+    if (this.chatRecoveryTimer) clearTimeout(this.chatRecoveryTimer);
     disposeDashboardCharts();
   },
   methods: {
@@ -649,7 +663,12 @@ const app = createApp({
     },
     async setModule(moduleName) {
       const route = moduleRoutes[moduleName] ?? moduleRoutes.dashboard;
-      if (this.$route.name !== route.name) await this.$router.push({ name: route.name });
+      if (this.$route.name !== route.name) {
+        const target = moduleName === "pi-chat"
+          ? { name: route.name, params: { projectId: "my", conversationId: "new" } }
+          : { name: route.name };
+        await this.$router.push(target);
+      }
     },
     navigateModule(moduleName) {
       if (moduleName === "pi-tasks") this.taskProjectFilterId = null;
@@ -664,6 +683,7 @@ const app = createApp({
         await nextTick();
         this.renderDashboardCharts();
       }
+      if (moduleName === "model-monitoring" && this.token) await this.loadModelMonitoring();
     },
     async loadDataSourceSettings() {
       this.dataSourceSettings = await this.api("/settings/data-source");
@@ -713,6 +733,53 @@ const app = createApp({
       this.taskForm.modelConfigId ||= this.modelSettings.id || "";
       if (!this.chatForm.model) this.chatForm.model = this.modelSettings.model;
       await this.loadAvailableModels();
+      await this.loadSystemPrivateModels();
+    },
+    async loadSystemPrivateModels() {
+      try {
+        const payload = await this.api("/settings/system-private-models");
+        this.systemPrivateModels = Array.isArray(payload.models) ? payload.models : [];
+        this.systemOllamaBaseUrl = payload.baseUrl || this.systemOllamaBaseUrl;
+      } catch {
+        this.systemPrivateModels = [];
+      }
+    },
+    async setSystemPrivateModelEnabled(model, enabled) {
+      try {
+        await this.api(`/settings/system-private-models/${encodeURIComponent(model.model)}/enabled`, { method: "PUT", body: JSON.stringify({ enabled }) });
+        model.enabled = enabled;
+        await this.loadAvailableModels();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error);
+      }
+    },
+    async savePrivateModelEndpoint(model) {
+      try {
+        const payload = await this.api(`/settings/system-private-models/${encodeURIComponent(model.model)}/config`, { method: "PUT", body: JSON.stringify({ baseUrl: model.baseUrl }) });
+        model.baseUrl = payload.baseUrl;
+        this.settingsMessage = `${model.model} 的服务地址已更新。`;
+        await this.loadModelSettings();
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error);
+      }
+    },
+    formatModelSize(bytes) { return bytes ? `${(Number(bytes) / 1024 / 1024 / 1024).toFixed(1)} GB` : "—"; },
+    async loadModelMonitoring() {
+      this.monitoringLoading = true;
+      try {
+        this.modelMonitoring = await this.api(`/monitoring/models?range=${this.monitoringRange}&scope=${this.monitoringScope}`);
+        if (this.modelMonitoring.scope !== this.monitoringScope) this.monitoringScope = this.modelMonitoring.scope;
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error);
+      } finally { this.monitoringLoading = false; }
+    },
+    formatTokenCount(value) {
+      const number = Number(value || 0);
+      return number >= 1_000_000 ? `${(number / 1_000_000).toFixed(2)}M` : number >= 1_000 ? `${(number / 1_000).toFixed(1)}K` : String(number);
+    },
+    monitoringBarWidth(value, items, key) {
+      const max = Math.max(1, ...(items || []).map((item) => Number(item[key] || 0)));
+      return `${Math.max(3, Number(value || 0) / max * 100)}%`;
     },
     async loadAvailableModels() {
       const selectedConfig = this.modelConfigs.find((item) => item.id === Number(this.chatForm.modelConfigId)) ?? this.modelSettings;
@@ -788,6 +855,20 @@ const app = createApp({
       for (const item of this.subscriptions) this.subscriptionChartSettings[item.id] ||= { range: "month", interval: "1d" };
       await this.refreshDashboardCharts();
     },
+    async testTushareConnection() {
+      this.dataSourceTesting = true;
+      this.dataSourceTestMessage = "";
+      try {
+        const result = await this.api("/settings/data-source/test-tushare", {
+          method: "POST", body: JSON.stringify({ tushareToken: this.dataSourceSettings.tushareToken || "" }),
+        });
+        this.dataSourceTestMessage = result.message;
+      } catch (error) {
+        this.dataSourceTestMessage = error instanceof Error ? error.message : String(error);
+      } finally {
+        this.dataSourceTesting = false;
+      }
+    },
     async saveModelSettings() {
       this.settingsSaving = true;
       this.settingsMessage = "";
@@ -810,22 +891,22 @@ const app = createApp({
       }
     },
     newModelConfig() {
-      this.modelSettings = { id: null, name: "OpenAI GPT", provider: "openai", model: "gpt-5-mini", baseUrl: "https://api.openai.com/v1", apiKeyRef: "OPENAI_API_KEY", temperature: 0.2, maxOutputTokens: 4096, contextBudgetTokens: 32768, reasoningEffort: "medium", isDefault: !this.modelConfigs.length };
+      this.modelSettings = { id: null, name: "OpenAI GPT", provider: "openai", model: "gpt-5-mini", baseUrl: "https://api.openai.com/v1", apiKeyRef: "", apiKey: "", temperature: 0.2, maxOutputTokens: 4096, contextBudgetTokens: 32768, reasoningEffort: "medium", isDefault: !this.modelConfigs.length };
       this.modelTestMessage = "";
       this.modelDrawerOpen = true;
     },
     applyModelProviderDefaults() {
       const presets = {
-        ollama: { name: "本地模型", model: "qwen3:8b", baseUrl: "http://127.0.0.1:11434", apiKeyRef: "" },
-        openai: { name: "OpenAI GPT", model: "gpt-5-mini", baseUrl: "https://api.openai.com/v1", apiKeyRef: "OPENAI_API_KEY" },
-        glm: { name: "智谱 GLM", model: "glm-4.5", baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKeyRef: "ZHIPU_API_KEY" },
-        minimax: { name: "MiniMax", model: "MiniMax-M1", baseUrl: "https://api.minimaxi.com/v1", apiKeyRef: "MINIMAX_API_KEY" },
+        ollama: { name: "本地模型", model: "qwen3:8b", baseUrl: "http://127.0.0.1:11434", apiKeyRef: "", apiKey: "" },
+        openai: { name: "OpenAI GPT", model: "gpt-5-mini", baseUrl: "https://api.openai.com/v1", apiKeyRef: "", apiKey: "" },
+        glm: { name: "智谱 GLM", model: "glm-4.5", baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKeyRef: "", apiKey: "" },
+        minimax: { name: "MiniMax", model: "MiniMax-M1", baseUrl: "https://api.minimaxi.com/v1", apiKeyRef: "", apiKey: "" },
       };
       Object.assign(this.modelSettings, presets[this.modelSettings.provider] || presets.openai);
     },
     modelProviderLabel(provider) { return { ollama: "Ollama", openai: "OpenAI / 兼容 API", glm: "智谱 GLM", minimax: "MiniMax" }[provider] || provider; },
     modelDeploymentLabel(config) { return config.provider === "ollama" ? "平台私有" : "在线 API"; },
-    editModelConfig(config) { this.modelSettings = { ...config }; this.modelTestMessage = ""; this.modelDrawerOpen = true; },
+    editModelConfig(config) { this.modelSettings = { ...config, apiKey: "" }; this.modelTestMessage = ""; this.modelDrawerOpen = true; },
     async deleteModelConfig(config) {
       if (!confirm(`删除模型配置“${config.name}”？`)) return;
       await this.api(`/settings/models/${config.id}`, { method: "DELETE" });
@@ -1133,6 +1214,14 @@ const app = createApp({
     chartSettingFor(id) {
       return this.subscriptionChartSettings[id] ?? { range: "month", interval: "1d" };
     },
+    marketOverviewMetrics(id) {
+      const stats = this.marketStats[id];
+      if (!stats) return [];
+      return [
+        { key: "52_week_high", label: "52 周最高", display: stats.high.toFixed(2), tone: "high" },
+        { key: "52_week_low", label: "52 周最低", display: stats.low.toFixed(2), tone: "low" },
+      ];
+    },
     async updateSubscriptionChartSetting(item, key, value) {
       const setting = { ...this.chartSettingFor(item.id), [key]: value };
       this.subscriptionChartSettings[item.id] = setting;
@@ -1164,6 +1253,7 @@ const app = createApp({
       if (!this.subscriptions.length) {
         disposeDashboardCharts();
         this.chartData = {};
+        this.marketStats = {};
         this.fundamentalData = {};
         return;
       }
@@ -1172,6 +1262,7 @@ const app = createApp({
       const nextErrors = {};
       const nextFundamentals = {};
       const nextFundamentalErrors = {};
+      const nextMarketStats = {};
       await Promise.all(
         this.subscriptions.map(async (item) => {
           const setting = this.chartSettingFor(item.id);
@@ -1205,6 +1296,20 @@ const app = createApp({
                 nextFundamentalErrors[item.id] = error instanceof Error ? error.message : String(error);
               }
             })(),
+            (async () => {
+              try {
+                const payload = await this.api("/bars", {
+                  method: "POST",
+                  body: JSON.stringify({ market: item.market, symbol: item.symbol, start: isoDate(370), end: isoDate(), adjust: "qfq", interval: "1d", range: "year" }),
+                });
+                const bars = payload.bars ?? [];
+                const highs = bars.map((bar) => Number(bar.high)).filter(Number.isFinite);
+                const lows = bars.map((bar) => Number(bar.low)).filter(Number.isFinite);
+                if (highs.length && lows.length) nextMarketStats[item.id] = { high: Math.max(...highs), low: Math.min(...lows) };
+              } catch {
+                // 行情统计是补充信息，失败时不影响基本面和主图加载。
+              }
+            })(),
           ]);
         }),
       );
@@ -1212,6 +1317,7 @@ const app = createApp({
       this.chartErrors = nextErrors;
       this.fundamentalData = nextFundamentals;
       this.fundamentalErrors = nextFundamentalErrors;
+      this.marketStats = nextMarketStats;
       this.dashboardLoading = false;
       await nextTick();
       this.renderDashboardCharts();
@@ -1333,7 +1439,7 @@ const app = createApp({
       }
     },
     async removeProject(project) {
-      if (!window.confirm(`删除项目“${project.name}”？项目内历史对话会保留到未归属对话。`)) return;
+      if (!window.confirm(`删除项目“${project.name}”？项目内历史任务会保留为未归属任务。`)) return;
       await this.api(`/pi/projects/${project.id}`, { method: "DELETE" });
       if (this.activeProjectId === project.id) this.selectProject(null);
       await this.loadProjects();
@@ -1401,28 +1507,34 @@ const app = createApp({
       const conversations = await this.api("/pi/conversations");
       this.chatHistory = conversations.map((item) => ({
         id: item.id,
-        title: item.title || "新对话",
+        title: item.title || "新任务",
         updatedAt: item.updated_at,
+        archivedAt: item.archived_at || null,
         projectId: item.project_id ?? null,
         messages: item.messages || [],
       }));
       localStorage.setItem("stock-harness-chat-history", JSON.stringify(this.chatHistory));
     },
     saveTask() {
-      if (!this.activeProjectId) { this.error = "请先进入一个项目，再创建项目任务。"; return; }
+      if (!this.activeProjectId) { this.error = "请先进入一个项目，再创建定时任务。"; return; }
       if (!this.taskForm.name || !this.taskForm.prompt || !this.taskForm.modelConfigId) { this.error = "请填写任务名称、提示词并选择执行模型。"; return; }
       const model = this.modelConfigs.find((item) => item.id === Number(this.taskForm.modelConfigId));
       const task = { ...this.taskForm, projectId: this.activeProjectId, id: Date.now(), modelName: model?.name ?? model?.model ?? "" };
       this.savedTasks.unshift(task);
       localStorage.setItem("stock-harness-pi-tasks", JSON.stringify(this.savedTasks));
-      this.settingsMessage = `任务“${task.name}”已保存。`;
+      this.settingsMessage = `定时任务“${task.name}”已保存。`;
       this.taskDrawerOpen = false;
     },
     deleteTask(id) {
       this.savedTasks = this.savedTasks.filter((item) => item.id !== id);
       localStorage.setItem("stock-harness-pi-tasks", JSON.stringify(this.savedTasks));
     },
+    taskScheduleLabel(schedule) {
+      return ({ manual: "手动（旧任务）", daily: "每日执行", weekly: "每周执行" })[schedule] || schedule;
+    },
     newChatSession(syncRoute = true) {
+      if (this.chatRecoveryTimer) clearTimeout(this.chatRecoveryTimer);
+      this.chatRecoveryTimer = null;
       this.chatSessionId = null;
       this.chatMessages = [];
       this.chatReply = "";
@@ -1490,7 +1602,7 @@ const app = createApp({
     },
     archiveCurrentChat() {
       if (!this.chatMessages.length) return;
-      const first = this.chatMessages.find((item) => item.role === "user")?.content || "新对话";
+      const first = this.chatMessages.find((item) => item.role === "user")?.content || "新任务";
       const entry = {
         id: this.chatSessionId || Date.now(),
         title: first.slice(0, 28),
@@ -1511,25 +1623,88 @@ const app = createApp({
       this.chatThinking = "";
       if (syncRoute) this.syncChatRoute();
     },
+    async renameChat(entry) {
+      const title = window.prompt("重命名任务", entry.title);
+      if (title === null || !title.trim() || title.trim() === entry.title) return;
+      try {
+        await this.api(`/pi/conversations/${entry.id}`, { method: "PUT", body: JSON.stringify({ title: title.trim() }) });
+        await this.loadChatHistory();
+      } catch (error) { this.error = error instanceof Error ? error.message : String(error); }
+    },
+    async setChatArchived(entry, archived) {
+      try {
+        await this.api(`/pi/conversations/${entry.id}/${archived ? "archive" : "restore"}`, { method: "POST" });
+        if (archived && this.chatSessionId === entry.id) this.newChatSession();
+        await this.loadChatHistory();
+      } catch (error) { this.error = error instanceof Error ? error.message : String(error); }
+    },
+    formatChatTime(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      const today = new Date();
+      return date.toDateString() === today.toDateString()
+        ? `今天 ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`
+        : date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+    },
+    async recoverChatSession(entry) {
+      const lastMessage = entry?.messages?.at(-1);
+      if (!entry || lastMessage?.role !== "user") return;
+      const conversationId = entry.id;
+      try {
+        const status = await this.api(`/pi/conversations/${conversationId}/status`);
+        if (!status.running || this.chatSessionId !== conversationId) return;
+        this.chatLoading = true;
+        const poll = async () => {
+          if (this.chatSessionId !== conversationId || this.activeModule !== "pi-chat") {
+            this.chatLoading = false;
+            this.chatRecoveryTimer = null;
+            return;
+          }
+          try {
+            const current = await this.api(`/pi/conversations/${conversationId}/status`);
+            await this.loadChatHistory();
+            const refreshed = this.chatHistory.find((item) => item.id === conversationId);
+            if (refreshed) this.openChatHistory(refreshed, false);
+            if (current.running) {
+              this.chatRecoveryTimer = setTimeout(poll, 1500);
+            } else {
+              this.chatLoading = false;
+              this.chatRecoveryTimer = null;
+            }
+          } catch (error) {
+            this.chatLoading = false;
+            this.chatRecoveryTimer = null;
+            this.error = error instanceof Error ? error.message : String(error);
+          }
+        };
+        this.chatRecoveryTimer = setTimeout(poll, 500);
+      } catch {
+        // 后端已重启或任务已经结束时，保留已加载的历史记录即可。
+      }
+    },
     syncChatRoute(replace = false) {
       if (this.activeModule !== "pi-chat") return;
-      const query = {};
-      if (this.activeProjectId) query.project = String(this.activeProjectId);
-      if (this.chatSessionId) query.conversation = String(this.chatSessionId);
-      const currentProject = String(this.$route.query.project || "");
-      const currentConversation = String(this.$route.query.conversation || "");
-      if (currentProject === String(query.project || "") && currentConversation === String(query.conversation || "")) return;
-      this.$router[replace ? "replace" : "push"]({ name: "pi-chat", query });
+      const params = {
+        projectId: this.activeProjectId ? String(this.activeProjectId) : "my",
+        conversationId: this.chatSessionId ? String(this.chatSessionId) : "new",
+      };
+      if (String(this.$route.params.projectId || "") === params.projectId && String(this.$route.params.conversationId || "") === params.conversationId) return;
+      this.$router[replace ? "replace" : "push"]({ name: "pi-chat", params });
     },
     restoreChatRoute() {
-      const projectValue = Number(this.$route.query.project || 0);
-      const conversationValue = Number(this.$route.query.conversation || 0);
+      const projectParam = String(this.$route.params.projectId || "my");
+      const conversationParam = String(this.$route.params.conversationId || "new");
+      const projectValue = projectParam === "my" ? 0 : Number(projectParam);
+      const conversationValue = conversationParam === "new" ? 0 : Number(conversationParam);
       const projectId = Number.isInteger(projectValue) && projectValue > 0 ? projectValue : null;
       this.activeProjectId = projectId && this.projects.some((item) => item.id === projectId) ? projectId : null;
       if (this.activeProjectId) localStorage.setItem("stock-harness-active-project", String(this.activeProjectId));
       else localStorage.removeItem("stock-harness-active-project");
       const entry = conversationValue > 0 ? this.chatHistory.find((item) => item.id === conversationValue && (item.projectId ?? null) === this.activeProjectId) : null;
-      if (entry) this.openChatHistory(entry, false);
+      if (entry) {
+        this.openChatHistory(entry, false);
+        void this.recoverChatSession(entry);
+      }
       else this.newChatSession(false);
     },
     filteredChatHistory() {
@@ -1540,7 +1715,12 @@ const app = createApp({
     chatHistoryForProject(projectId) {
       const normalized = projectId ? Number(projectId) : null;
       const query = this.chatHistoryQuery.trim().toLowerCase();
-      const scoped = this.chatHistory.filter((item) => (item.projectId ?? null) === normalized);
+      const scoped = this.chatHistory.filter((item) => (item.projectId ?? null) === normalized && !item.archivedAt);
+      return query ? scoped.filter((item) => item.title.toLowerCase().includes(query)) : scoped;
+    },
+    archivedChatHistory() {
+      const query = this.chatHistoryQuery.trim().toLowerCase();
+      const scoped = this.chatHistory.filter((item) => item.archivedAt);
       return query ? scoped.filter((item) => item.title.toLowerCase().includes(query)) : scoped;
     },
     async startChat() {
@@ -2072,6 +2252,9 @@ const app = createApp({
     rangeLabel(range) {
       return { day: "日", week: "周", month: "月", halfYear: "半年", year: "一年", custom: "自定义" }[range] ?? range;
     },
+    usesTushareSource() {
+      return Object.values(this.dataSourceSettings.providerChains ?? {}).some((items) => items.includes("tushare"));
+    },
     intervalLabel(interval) {
       return { "1m": "1 分钟", "15m": "15 分钟", "30m": "30 分钟", "1h": "1 小时", "4h": "4 小时", "1d": "日 K", "1w": "周 K", "1mo": "月 K" }[interval] ?? interval;
     },
@@ -2236,7 +2419,7 @@ const app = createApp({
                 </div>
                 <div v-if="fundamentalData[item.id]" class="fundamental-panel">
                   <div class="fundamental-grid">
-                    <article v-for="metric in fundamentalData[item.id].metrics" :key="metric.key">
+                    <article v-for="metric in [...fundamentalData[item.id].metrics, ...marketOverviewMetrics(item.id)]" :key="metric.key" :class="{ 'market-stat-high': metric.tone === 'high', 'market-stat-low': metric.tone === 'low' }">
                       <span>{{ metric.label }}</span>
                       <strong>{{ metric.display }}</strong>
                     </article>
@@ -2495,7 +2678,7 @@ const app = createApp({
               <template #roles="{ record: project }">{{ projectRoleNames(project).join('、') || '未配置' }}</template>
               <template #capabilities="{ record: project }"><a-space><a-tag>Skill {{ project.skillIds.length }}</a-tag><a-tag>插件 {{ project.pluginIds.length }}</a-tag></a-space></template>
               <template #updatedAt="{ record: project }">{{ formatTime(project.updated_at) }}</template>
-              <template #actions="{ record: project }"><a-space wrap><template v-if="!project.archived_at"><a-button type="text" size="mini" @click="openProject(project)">对话</a-button><a-button type="text" size="mini" @click="openProjectTasks(project)">任务</a-button><a-button type="text" size="mini" @click="viewProject(project)">详情</a-button><a-button type="text" size="mini" @click="editProject(project)">修改</a-button><a-button type="text" status="warning" size="mini" @click="archiveProject(project)">归档</a-button></template><template v-else><a-button type="text" size="mini" @click="viewProject(project)">详情</a-button><a-button type="text" size="mini" @click="restoreProject(project)">恢复</a-button><a-button type="text" status="danger" size="mini" @click="removeProject(project)">永久删除</a-button></template></a-space></template>
+              <template #actions="{ record: project }"><a-space wrap><template v-if="!project.archived_at"><a-button type="text" size="mini" @click="openProject(project)">任务</a-button><a-button type="text" size="mini" @click="openProjectTasks(project)">定时任务</a-button><a-button type="text" size="mini" @click="viewProject(project)">详情</a-button><a-button type="text" size="mini" @click="editProject(project)">修改</a-button><a-button type="text" status="warning" size="mini" @click="archiveProject(project)">归档</a-button></template><template v-else><a-button type="text" size="mini" @click="viewProject(project)">详情</a-button><a-button type="text" size="mini" @click="restoreProject(project)">恢复</a-button><a-button type="text" status="danger" size="mini" @click="removeProject(project)">永久删除</a-button></template></a-space></template>
               <template #empty><a-empty :description="projectStatusView === 'archived' ? '暂无已归档项目' : '还没有项目'"><a-button v-if="projectStatusView === 'active'" type="primary" @click="createProject">新建项目</a-button></a-empty></template>
             </a-table>
           </div>
@@ -2503,12 +2686,12 @@ const app = createApp({
           <a-modal :visible="Boolean(projectDialogMode)" :footer="false" :width="900" unmount-on-close @cancel="resetProjectForm">
             <section v-if="projectDialogMode === 'detail' && selectedProject" class="project-detail-dialog">
               <div class="modal-head"><div><h3>{{ selectedProject.name }}</h3><p>项目详情与能力配置</p></div></div>
-              <div class="project-detail-summary"><div><small>会话</small><strong>{{ selectedProject.conversationCount }}</strong></div><div><small>角色</small><strong>{{ selectedProject.roleIds.length }}</strong></div><div><small>Skill</small><strong>{{ selectedProject.skillIds.length }}</strong></div><div><small>插件</small><strong>{{ selectedProject.pluginIds.length }}</strong></div></div>
+              <div class="project-detail-summary"><div><small>任务</small><strong>{{ selectedProject.conversationCount }}</strong></div><div><small>定时任务</small><strong>{{ projectTaskCount(selectedProject.id) }}</strong></div><div><small>角色</small><strong>{{ selectedProject.roleIds.length }}</strong></div><div><small>Skill / 插件</small><strong>{{ selectedProject.skillIds.length }} / {{ selectedProject.pluginIds.length }}</strong></div></div>
               <dl class="project-detail-list"><div><dt>项目说明</dt><dd>{{ selectedProject.description || '暂无项目说明' }}</dd></div><div><dt>公共指令</dt><dd class="instruction-text">{{ selectedProject.instructions || '暂无公共指令' }}</dd></div><div><dt>角色成员</dt><dd><span v-for="name in projectRoleNames(selectedProject)" :key="name" class="detail-tag">{{ name }}</span><span v-if="!projectRoleNames(selectedProject).length">未配置</span></dd></div><div><dt>公共 Skill</dt><dd><span v-for="name in projectSkillNames(selectedProject)" :key="name" class="detail-tag">{{ name }}</span><span v-if="!projectSkillNames(selectedProject).length">未配置</span></dd></div><div><dt>公共插件</dt><dd><span v-for="name in projectPluginNames(selectedProject)" :key="name" class="detail-tag">{{ name }}</span><span v-if="!projectPluginNames(selectedProject).length">未配置</span></dd></div></dl>
               <div class="modal-actions"><template v-if="!selectedProject.archived_at"><a-button @click="openProject(selectedProject)">进入项目</a-button><a-button type="primary" @click="editProject(selectedProject)">修改配置</a-button></template><a-button v-else type="primary" @click="restoreProject(selectedProject); resetProjectForm()">恢复项目</a-button></div>
             </section>
             <section v-else class="project-editor-dialog">
-              <div class="modal-head"><div><h3>{{ projectDialogMode === 'edit' ? '修改项目' : '新建项目' }}</h3><p>{{ projectDialogMode === 'edit' ? '修改项目信息和公共能力配置。' : '创建一个用于组织对话和共享能力的项目。' }}</p></div></div>
+              <div class="modal-head"><div><h3>{{ projectDialogMode === 'edit' ? '修改项目' : '新建项目' }}</h3><p>{{ projectDialogMode === 'edit' ? '修改项目信息和公共能力配置。' : '创建一个用于组织任务、定时任务和共享能力的项目。' }}</p></div></div>
               <a-form class="project-form arco-project-form" layout="vertical" :model="projectForm" @submit-success="saveProject">
                 <a-form-item label="项目名称" field="name" :rules="[{ required: true, message: '请输入项目名称' }]"><a-input v-model="projectForm.name" placeholder="如：贵州茅台研究" allow-clear /></a-form-item>
                 <a-form-item label="项目说明"><a-textarea v-model="projectForm.description" placeholder="项目目标、范围和背景" :auto-size="{ minRows: 2, maxRows: 4 }" /></a-form-item>
@@ -2528,36 +2711,37 @@ const app = createApp({
           <div class="openwebui-shell" :class="{ 'sidebar-hidden': !chatSidebarOpen }">
             <div class="chat-history-sidebar">
               <div class="history-brand"><span class="history-logo">✦</span><strong>Stock AI</strong><a-button type="text" shape="circle" title="收起侧栏" @click="chatSidebarOpen = false">‹</a-button></div>
-              <a-button class="history-new" long @click="newChatInProject(activeProjectId)"><span>＋</span> 在{{ activeProject?.name || '个人空间' }}中新对话</a-button>
-              <a-input v-model="chatHistoryQuery" class="history-search" allow-clear placeholder="搜索对话"><template #prefix>⌕</template></a-input>
+              <a-button class="history-new" long @click="newChatInProject(activeProjectId)"><span>＋</span> {{ activeProject ? '在' + activeProject.name + '中新建任务' : '新建任务' }}</a-button>
+              <a-input v-model="chatHistoryQuery" class="history-search" allow-clear placeholder="搜索任务"><template #prefix>⌕</template></a-input>
               <div class="history-section project-tree">
                 <small>项目</small>
                 <div v-for="project in activeProjects" :key="project.id" class="project-tree-group">
                   <div class="project-tree-row" :class="{ active: project.id === activeProjectId }">
                     <button class="project-folder" type="button" @click="toggleProjectFolder(project.id)"><span>{{ isProjectExpanded(project.id) ? '⌄' : '›' }}</span><span>▱</span></button>
                     <button class="project-name" type="button" @click="selectProject(project.id)">{{ project.name }}</button>
-                    <button class="project-add" type="button" title="在项目中新建对话" @click="newChatInProject(project.id)">＋</button>
+                    <button class="project-add" type="button" title="在项目中新建任务" @click="newChatInProject(project.id)">＋</button>
                   </div>
                   <div v-if="isProjectExpanded(project.id)" class="project-conversations">
                     <div class="project-task-row" :class="{ active: activeModule === 'pi-tasks' && activeProjectId === project.id }">
-                      <button type="button" class="project-submodule" @click="openProjectTasks(project)"><span>◇</span><span>任务管理</span><b>{{ projectTaskCount(project.id) }}</b></button>
-                      <button type="button" class="project-task-add" title="新建任务" aria-label="新建任务" @click.stop="openTaskCreator(project)">＋</button>
+                      <button type="button" class="project-submodule" @click="openProjectTasks(project)"><span>◇</span><span>定时任务</span><b>{{ projectTaskCount(project.id) }}</b></button>
+                      <button type="button" class="project-task-add" title="新建定时任务" aria-label="新建定时任务" @click.stop="openTaskCreator(project)">＋</button>
                     </div>
-                    <button v-for="entry in chatHistoryForProject(project.id)" :key="entry.id" type="button" :class="{ active: entry.id === chatSessionId }" @click="openChatHistory(entry)"><span></span><span>{{ entry.title }}</span><b>···</b></button>
-                    <p v-if="!chatHistoryForProject(project.id).length">暂无对话</p>
+                    <div v-for="entry in chatHistoryForProject(project.id)" :key="entry.id" class="conversation-row" :class="{ active: entry.id === chatSessionId }"><button type="button" @click="openChatHistory(entry)"><span></span><span><strong>{{ entry.title }}</strong><small>{{ formatChatTime(entry.updatedAt) }}</small></span></button><a-dropdown trigger="click"><button class="conversation-more" type="button" aria-label="任务操作" @click.stop>···</button><template #content><a-doption @click="renameChat(entry)">重命名</a-doption><a-doption @click="setChatArchived(entry, true)">归档</a-doption></template></a-dropdown></div>
+                    <p v-if="!chatHistoryForProject(project.id).length">暂无任务</p>
                   </div>
                 </div>
                 <div class="project-tree-group personal-group">
                   <div class="project-tree-row" :class="{ active: activeProjectId === null }">
                     <button class="project-folder" type="button" @click="toggleProjectFolder(null)"><span>{{ isProjectExpanded(null) ? '⌄' : '›' }}</span><span>▱</span></button>
-                    <button class="project-name" type="button" @click="selectProject(null)">个人空间</button>
-                    <button class="project-add" type="button" title="新建个人对话" @click="newChatInProject(null)">＋</button>
+                    <button class="project-name" type="button" @click="selectProject(null)">任务</button>
+                    <button class="project-add" type="button" title="新建个人任务" @click="newChatInProject(null)">＋</button>
                   </div>
                   <div v-if="isProjectExpanded(null)" class="project-conversations">
-                    <button v-for="entry in chatHistoryForProject(null)" :key="entry.id" type="button" :class="{ active: entry.id === chatSessionId }" @click="openChatHistory(entry)"><span></span><span>{{ entry.title }}</span><b>···</b></button>
-                    <p v-if="!chatHistoryForProject(null).length">暂无对话</p>
+                    <div v-for="entry in chatHistoryForProject(null)" :key="entry.id" class="conversation-row" :class="{ active: entry.id === chatSessionId }"><button type="button" @click="openChatHistory(entry)"><span></span><span><strong>{{ entry.title }}</strong><small>{{ formatChatTime(entry.updatedAt) }}</small></span></button><a-dropdown trigger="click"><button class="conversation-more" type="button" aria-label="任务操作" @click.stop>···</button><template #content><a-doption @click="renameChat(entry)">重命名</a-doption><a-doption @click="setChatArchived(entry, true)">归档</a-doption></template></a-dropdown></div>
+                    <p v-if="!chatHistoryForProject(null).length">暂无任务</p>
                   </div>
                 </div>
+                <div class="archived-conversations"><button class="archived-toggle" type="button" @click="archivedChatsOpen = !archivedChatsOpen"><span>{{ archivedChatsOpen ? '⌄' : '›' }}</span><span>已归档任务</span><b>{{ archivedChatHistory().length }}</b></button><div v-if="archivedChatsOpen" class="project-conversations"><div v-for="entry in archivedChatHistory()" :key="entry.id" class="conversation-row archived"><button type="button" @click="openChatHistory(entry)"><span></span><span><strong>{{ entry.title }}</strong><small>{{ formatChatTime(entry.updatedAt) }}</small></span></button><a-dropdown trigger="click"><button class="conversation-more" type="button" aria-label="归档任务操作" @click.stop>···</button><template #content><a-doption @click="setChatArchived(entry, false)">恢复</a-doption><a-doption @click="renameChat(entry)">重命名</a-doption></template></a-dropdown></div><p v-if="!archivedChatHistory().length">暂无已归档任务</p></div></div>
               </div>
               <section class="artifact-list-panel">
                 <div class="artifact-list-head"><strong>项目产物</strong><span>{{ activeProjectArtifacts.length }}</span></div>
@@ -2569,7 +2753,7 @@ const app = createApp({
                   </button>
                   <div v-if="!activeProjectArtifacts.length" class="artifact-list-empty">助手回复保存后，会显示在这里</div>
                 </div>
-                <div v-else class="artifact-list-empty">个人空间不沉淀正式产物</div>
+                <div v-else class="artifact-list-empty">未归属项目的任务不沉淀正式产物</div>
               </section>
             </div>
             <a-button v-if="!chatSidebarOpen" class="sidebar-reopen" shape="circle" title="展开侧栏" @click="chatSidebarOpen = true">☰</a-button>
@@ -2669,23 +2853,23 @@ const app = createApp({
               <div v-else class="artifact-preview markdown-body" v-html="renderMarkdown(selectedArtifact.content)"></div>
               <div class="artifact-source">
                 <span>正式归属：{{ activeProject?.name }}</span>
-                <span>来源会话：{{ selectedArtifact.conversationId || '当前未保存会话' }}</span>
+                <span>来源任务：{{ selectedArtifact.conversationId || '当前未保存任务' }}</span>
               </div>
             </template>
             <div v-else class="workspace-empty">从左侧项目产物中选择一个文件</div>
           </aside>
           </div>
-          <a-drawer v-model:visible="taskDrawerOpen" title="新建项目任务" :width="760" :footer="false">
+          <a-drawer v-model:visible="taskDrawerOpen" title="新建定时任务" :width="760" :footer="false">
             <form class="role-form task-form" @submit.prevent="saveTask">
-              <div class="task-drawer-project"><small>任务归属</small><strong>{{ activeProject?.name }}</strong></div>
+              <div class="task-drawer-project"><small>所属项目</small><strong>{{ activeProject?.name }}</strong></div>
               <label>任务名称<input v-model.trim="taskForm.name" placeholder="例如：盘后复盘" /></label>
               <label>执行角色<select v-model="taskForm.roleId"><option value="">自动选择</option><option v-for="role in chatRoles" :key="role.id" :value="role.id">{{ role.name }}</option></select></label>
               <label>执行模型<select v-model="taskForm.modelConfigId"><option value="">请选择模型</option><option v-for="model in modelConfigs" :key="model.id" :value="model.id">{{ model.name || model.model }}</option></select></label>
-              <label>执行方式<select v-model="taskForm.schedule"><option value="manual">手动执行</option><option value="daily">每日执行</option><option value="weekly">每周执行</option></select></label>
+              <label>执行周期<select v-model="taskForm.schedule"><option value="daily">每日执行</option><option value="weekly">每周执行</option></select></label>
               <label class="task-prompt-field">任务指令
                 <RichChatComposer ref="taskComposer" v-model="taskForm.prompt" class="task-prompt-composer" placeholder="输入 @ 指定角色、# 选择股票、/ 调用技能与插件" :roles="chatRoles" :subscriptions="subscriptions" :skills="skills" :plugins="plugins" :starters="chatStarters" :show-attachments="false" :show-submit="false" @select-role="taskForm.roleId = $event" />
               </label>
-              <div class="button-row"><a-button @click="taskDrawerOpen = false">取消</a-button><a-button type="primary" html-type="submit">创建任务</a-button></div>
+              <div class="button-row"><a-button @click="taskDrawerOpen = false">取消</a-button><a-button type="primary" html-type="submit">创建定时任务</a-button></div>
             </form>
           </a-drawer>
           </div>
@@ -2694,17 +2878,17 @@ const app = createApp({
         <section v-if="activeModule === 'pi-tasks'" class="module-panel">
           <div class="panel-head">
             <div>
-              <h2>任务中心</h2>
-              <p>集中管理所有项目任务，也可以按项目查看和创建任务。</p>
+              <h2>定时任务</h2>
+              <p>集中管理各项目中按计划自动执行的任务。</p>
             </div>
             <div class="button-row">
               <a-select v-model="taskProjectFilterId" allow-clear placeholder="全部项目" style="width: 200px">
                 <a-option v-for="project in activeProjects" :key="project.id" :value="project.id">{{ project.name }}</a-option>
               </a-select>
-              <a-button type="primary" :disabled="!taskProjectFilterId" @click="openTaskCreator(projects.find(item => item.id === taskProjectFilterId))">＋ 新建任务</a-button>
+              <a-button type="primary" :disabled="!taskProjectFilterId" @click="openTaskCreator(projects.find(item => item.id === taskProjectFilterId))">＋ 新建定时任务</a-button>
             </div>
           </div>
-          <a-drawer v-model:visible="taskDrawerOpen" title="新建任务" :width="520" :footer="false"><form class="role-form task-form" @submit.prevent="saveTask">
+          <a-drawer v-model:visible="taskDrawerOpen" title="新建定时任务" :width="520" :footer="false"><form class="role-form task-form" @submit.prevent="saveTask">
             <label>任务名称<input v-model.trim="taskForm.name" /></label>
             <label>执行角色
               <select v-model="taskForm.roleId">
@@ -2714,7 +2898,6 @@ const app = createApp({
             </label>
             <label>调度方式
               <select v-model="taskForm.schedule">
-                <option value="manual">手动执行</option>
                 <option value="daily">每日</option>
                 <option value="weekly">每周</option>
               </select>
@@ -2731,11 +2914,11 @@ const app = createApp({
           <div class="card-grid" v-if="projectTasks.length">
             <article v-for="task in projectTasks" :key="task.id" class="feature-card">
               <div class="task-card-project">{{ projects.find(item => Number(item.id) === Number(task.projectId))?.name || '未知项目' }}</div>
-              <h3>{{ task.name }}</h3><p>{{ task.modelName }} · {{ task.schedule }}</p><p>{{ task.prompt }}</p>
+              <h3>{{ task.name }}</h3><p>{{ task.modelName }} · {{ taskScheduleLabel(task.schedule) }}</p><p>{{ task.prompt }}</p>
               <button type="button" class="small danger" @click="deleteTask(task.id)">删除</button>
             </article>
           </div>
-          <div v-else class="empty-state">{{ taskProjectFilterId ? '当前项目暂无任务。' : '暂无项目任务。' }}</div>
+          <div v-else class="empty-state">{{ taskProjectFilterId ? '当前项目暂无定时任务。' : '暂无定时任务。' }}</div>
         </section>
 
         <section v-if="activeModule === 'pi-roles'" class="module-panel">
@@ -2910,7 +3093,7 @@ const app = createApp({
               <template #columns>
                 <a-table-column title="数据源" :width="220"><template #cell="{ record }"><div class="source-name"><span class="source-logo">{{ record.name.slice(0, 1) }}</span><div><strong>{{ record.name }}</strong><small>{{ record.key }}</small></div></div></template></a-table-column>
                 <a-table-column title="协议" :width="130" data-index="protocol" />
-                <a-table-column title="认证" :width="130"><template #cell="{ record }"><a-tag>{{ {none:'无需认证',api_key:'API Key',bearer:'Bearer',hmac:'HMAC 签名'}[record.authType] || record.authType }}</a-tag></template></a-table-column>
+                <a-table-column title="认证" :width="130"><template #cell="{ record }"><a-tag>{{ {none:'无需认证',token:'Token',api_key:'API Key',bearer:'Bearer',hmac:'HMAC 签名'}[record.authType] || record.authType }}</a-tag></template></a-table-column>
                 <a-table-column title="市场" :width="230"><template #cell="{ record }"><a-space wrap><a-tag v-for="market in record.markets" :key="market">{{ marketLabel(market) }}</a-tag></a-space></template></a-table-column>
                 <a-table-column title="数据能力"><template #cell="{ record }"><a-space wrap><a-tag v-for="capability in record.capabilities" :key="capability" color="arcoblue">{{ {bars:'K 线',quote:'实时报价',symbols:'标的搜索',fundamentals:'基本面'}[capability] || capability }}</a-tag></a-space></template></a-table-column>
                 <a-table-column title="状态" :width="100"><template #cell="{ record }"><a-badge :status="record.enabled ? 'success' : 'default'" :text="record.enabled ? '已启用' : '已停用'" /></template></a-table-column>
@@ -2935,7 +3118,16 @@ const app = createApp({
 
           <a-drawer v-model:visible="dataSourceRoutingOpen" title="市场数据源路由" :width="620" :footer="false">
             <a-alert type="info">系统按照从左到右的顺序调用，失败后自动降级到下一数据源。</a-alert>
-            <a-form layout="vertical" class="routing-form"><a-form-item v-for="market in ['A Share','Hong Kong','US']" :key="market" :label="marketLabel(market) + '主备顺序'"><a-select v-model="dataSourceSettings.providerChains[market]" multiple><a-option v-for="source in allDataSources.filter(item => item.markets.includes(market))" :key="source.key" :value="source.key">{{ source.name }}</a-option></a-select></a-form-item><template v-if="usesFutuSource()"><div class="form-row"><a-form-item label="Futu Host"><a-input v-model="dataSourceSettings.futuHost" /></a-form-item><a-form-item label="Futu Port"><a-input-number v-model="dataSourceSettings.futuPort" :min="1" :max="65535" /></a-form-item></div></template><a-button type="primary" long :loading="settingsSaving" @click="saveDataSourceSettings">保存路由配置</a-button></a-form>
+            <a-form layout="vertical" class="routing-form">
+              <a-form-item v-for="market in ['A Share','Hong Kong','US']" :key="market" :label="marketLabel(market) + '主备顺序'"><a-select v-model="dataSourceSettings.providerChains[market]" multiple><a-option v-for="source in allDataSources.filter(item => item.markets.includes(market))" :key="source.key" :value="source.key">{{ source.name }}</a-option></a-select></a-form-item>
+              <template v-if="usesFutuSource()"><div class="form-row"><a-form-item label="Futu Host"><a-input v-model="dataSourceSettings.futuHost" /></a-form-item><a-form-item label="Futu Port"><a-input-number v-model="dataSourceSettings.futuPort" :min="1" :max="65535" /></a-form-item></div></template>
+              <a-card v-if="usesTushareSource()" class="auth-config-card" title="Tushare Pro 认证">
+                <a-form-item label="Token" :extra="dataSourceSettings.hasTushareToken ? 'Token 已安全保存；留空表示继续使用原 Token。' : 'Token 将加密保存在 AlphaDock 服务器中，保存后不再回显。'"><a-input-password v-model="dataSourceSettings.tushareToken" placeholder="请输入 tushare.pro 用户 Token" allow-clear /></a-form-item>
+                <a-alert v-if="dataSourceTestMessage" :type="dataSourceTestMessage.includes('成功') ? 'success' : 'warning'">{{ dataSourceTestMessage }}</a-alert>
+                <a-button :loading="dataSourceTesting" @click="testTushareConnection">测试 Tushare 连接</a-button>
+              </a-card>
+              <a-button type="primary" long :loading="settingsSaving" @click="saveDataSourceSettings">保存路由配置</a-button>
+            </a-form>
           </a-drawer>
         </section>
 
@@ -2956,10 +3148,65 @@ const app = createApp({
           <a-alert v-if="settingsMessage" type="success">{{ settingsMessage }}</a-alert>
         </section>
 
+        <section v-if="activeModule === 'model-monitoring'" class="module-panel model-monitoring-page" v-loading="monitoringLoading">
+          <div class="panel-head">
+            <div><h2>模型监控</h2><p>{{ monitoringScope === 'all' ? '全站模型资源消耗、用户活跃度与项目对话分布。' : '你的模型调用消耗、对话活跃度与项目使用分布。' }}</p></div>
+            <a-space>
+              <a-radio-group v-if="currentUser?.role === 'admin'" v-model="monitoringScope" type="button" @change="loadModelMonitoring"><a-radio value="mine">个人视图</a-radio><a-radio value="all">管理员视图</a-radio></a-radio-group>
+              <a-radio-group v-model="monitoringRange" type="button" @change="loadModelMonitoring"><a-radio value="day">今日</a-radio><a-radio value="week">近 7 日</a-radio><a-radio value="month">近 30 日</a-radio></a-radio-group>
+            </a-space>
+          </div>
+          <div class="monitoring-kpis">
+            <a-card><small>Token 总消耗</small><strong>{{ formatTokenCount(modelMonitoring.summary.totalTokens) }}</strong><span>输入 {{ formatTokenCount(modelMonitoring.summary.promptTokens) }} · 输出 {{ formatTokenCount(modelMonitoring.summary.completionTokens) }}</span></a-card>
+            <a-card><small>模型调用</small><strong>{{ modelMonitoring.summary.calls || 0 }}</strong><span>成功率 {{ modelMonitoring.summary.successRate ?? 100 }}%</span></a-card>
+            <a-card><small>对话数量</small><strong>{{ modelMonitoring.summary.conversations || 0 }}</strong><span>{{ modelMonitoring.summary.turns || 0 }} 个用户消息轮次</span></a-card>
+            <a-card><small>平均响应</small><strong>{{ modelMonitoring.summary.averageLatencyMs ? (modelMonitoring.summary.averageLatencyMs / 1000).toFixed(1) + 's' : '—' }}</strong><span>每次底层模型请求</span></a-card>
+          </div>
+          <div class="monitoring-grid">
+            <a-card class="monitoring-trend-card">
+              <template #title><div class="monitoring-card-title"><strong>Token 消耗趋势</strong><span>输入 / 输出每日分布</span></div></template>
+              <div v-if="modelMonitoring.trend.some(item => item.totalTokens)" class="token-trend">
+                <div v-for="item in modelMonitoring.trend" :key="item.date" class="trend-column" :title="item.date + ' · ' + item.totalTokens + ' Token'">
+                  <div class="trend-bars"><i class="completion" :style="{ height: monitoringBarWidth(item.completionTokens, modelMonitoring.trend, 'totalTokens') }"></i><i class="prompt" :style="{ height: monitoringBarWidth(item.promptTokens, modelMonitoring.trend, 'totalTokens') }"></i></div>
+                  <small>{{ item.date.slice(5) }}</small>
+                </div>
+              </div>
+              <a-empty v-else description="当前周期还没有 Token 调用记录" />
+              <div class="chart-legend"><span><i class="prompt"></i>输入 Token</span><span><i class="completion"></i>输出 Token</span></div>
+            </a-card>
+            <a-card>
+              <template #title><div class="monitoring-card-title"><strong>模型消耗分布</strong><span>按 Token 排名</span></div></template>
+              <div v-if="modelMonitoring.models.length" class="rank-list"><div v-for="(item, index) in modelMonitoring.models" :key="item.name" class="rank-row"><b>{{ index + 1 }}</b><div><span><strong>{{ item.name }}</strong><small>{{ item.calls }} 次调用 · {{ formatTokenCount(item.tokens) }} Token</small></span><i><em :style="{ width: monitoringBarWidth(item.tokens, modelMonitoring.models, 'tokens') }"></em></i></div></div></div>
+              <a-empty v-else description="暂无模型调用记录" />
+            </a-card>
+            <a-card>
+              <template #title><div class="monitoring-card-title"><strong>项目对话排行</strong><span>对话次数与 Token 消耗</span></div></template>
+              <div v-if="modelMonitoring.projects.length" class="rank-list"><div v-for="(item, index) in modelMonitoring.projects" :key="item.name" class="rank-row project-rank"><b>{{ index + 1 }}</b><div><span><strong>{{ item.name }}</strong><small>{{ item.conversations }} 个对话 · {{ formatTokenCount(item.tokens) }} Token</small></span><i><em :style="{ width: monitoringBarWidth(item.conversations, modelMonitoring.projects, 'conversations') }"></em></i></div></div></div>
+              <a-empty v-else description="当前周期暂无项目对话" />
+            </a-card>
+            <a-card v-if="monitoringScope === 'all'">
+              <template #title><div class="monitoring-card-title"><strong>用户消耗排行</strong><span>管理员可见</span></div></template>
+              <div v-if="modelMonitoring.users.length" class="rank-list"><div v-for="(item, index) in modelMonitoring.users" :key="item.name" class="rank-row user-rank"><b>{{ index + 1 }}</b><div><span><strong>{{ item.name }}</strong><small>{{ item.calls }} 次调用 · {{ formatTokenCount(item.tokens) }} Token</small></span><i><em :style="{ width: monitoringBarWidth(item.tokens, modelMonitoring.users, 'tokens') }"></em></i></div></div></div>
+              <a-empty v-else description="暂无用户调用记录" />
+            </a-card>
+          </div>
+        </section>
+
         <section v-if="activeModule === 'models'" class="module-panel model-management">
           <div class="panel-head"><div><h2>模型管理</h2><p>选择平台私有模型，或接入 GLM、MiniMax、OpenAI 等在线模型 API。</p></div><a-button type="primary" @click="newModelConfig">接入在线模型</a-button></div>
-          <div class="data-source-stats model-stats"><a-card><a-statistic title="全部模型" :value="modelConfigs.length" /></a-card><a-card><a-statistic title="平台私有" :value="modelConfigs.filter(item => item.provider === 'ollama').length" /></a-card><a-card><a-statistic title="在线 API" :value="modelConfigs.filter(item => item.provider !== 'ollama').length" /></a-card><a-card><a-statistic title="服务商" :value="new Set(modelConfigs.map(item => item.provider)).size" /></a-card></div>
-          <a-alert type="info" class="pi-config-alert">平台私有模型由 AlphaDock 服务器统一托管，用户只需选择；在线模型的地址、密钥引用与生成参数由 Pi Runtime 解析使用。</a-alert>
+          <div class="data-source-stats model-stats"><a-card><a-statistic title="全部模型" :value="systemPrivateModels.length + modelConfigs.filter(item => item.provider !== 'ollama').length" /></a-card><a-card><a-statistic title="平台私有" :value="systemPrivateModels.length" /></a-card><a-card><a-statistic title="已启用私有模型" :value="systemPrivateModels.filter(item => item.enabled).length" /></a-card><a-card><a-statistic title="在线 API" :value="modelConfigs.filter(item => item.provider !== 'ollama').length" /></a-card></div>
+          <a-alert type="info" class="pi-config-alert">平台私有模型由 AlphaDock 服务器统一托管，用户只需选择；在线模型的地址、API Key 与生成参数由 Pi Runtime 解析使用。</a-alert>
+          <a-card v-if="systemPrivateModels.length" class="data-source-table-card model-table-card" title="系统私有模型">
+            <a-table :data="systemPrivateModels" row-key="model" :pagination="false" :bordered="false">
+              <template #columns>
+                <a-table-column title="模型"><template #cell="{ record }"><div class="source-name"><span class="source-logo model-logo">私</span><div><strong>{{ record.model }}</strong><small>Ollama 本地部署</small></div></div></template></a-table-column>
+                <a-table-column title="模型服务地址（IP / Port）" :width="420"><template #cell="{ record }"><a-input v-model="record.baseUrl" :disabled="currentUser?.role !== 'admin'" placeholder="http://192.168.1.10:11434"><template #append><a-button v-if="currentUser?.role === 'admin'" type="text" @click="savePrivateModelEndpoint(record)">保存</a-button></template></a-input></template></a-table-column>
+                <a-table-column title="磁盘占用" :width="140"><template #cell="{ record }">{{ formatModelSize(record.size) }}</template></a-table-column>
+                <a-table-column title="状态" :width="130"><template #cell="{ record }"><a-badge :status="record.enabled ? 'success' : 'normal'" :text="record.enabled ? '已启用' : '已禁用'" /></template></a-table-column>
+                <a-table-column title="系统控制" :width="180" fixed="right"><template #cell="{ record }"><a-switch v-if="currentUser?.role === 'admin'" :model-value="record.enabled" checked-text="启用" unchecked-text="禁用" @change="setSystemPrivateModelEnabled(record, $event)" /><span v-else class="muted-cell">仅管理员可操作</span></template></a-table-column>
+              </template>
+            </a-table>
+          </a-card>
           <a-card class="data-source-table-card model-table-card">
             <a-table :data="modelConfigs" row-key="id" :pagination="false" :bordered="false">
               <template #columns>
@@ -2967,7 +3214,7 @@ const app = createApp({
                 <a-table-column title="部署方式" :width="130"><template #cell="{ record }"><a-tag :color="record.provider === 'ollama' ? 'green' : 'arcoblue'">{{ modelDeploymentLabel(record) }}</a-tag></template></a-table-column>
                 <a-table-column title="提供方" :width="190"><template #cell="{ record }">{{ modelProviderLabel(record.provider) }}</template></a-table-column>
                 <a-table-column title="服务地址"><template #cell="{ record }"><span class="model-endpoint">{{ record.baseUrl }}</span></template></a-table-column>
-                <a-table-column title="密钥" :width="170"><template #cell="{ record }"><span v-if="record.provider === 'ollama'" class="muted-cell">无需密钥</span><code v-else>{{ record.apiKeyRef || '未配置' }}</code></template></a-table-column>
+                <a-table-column title="密钥" :width="170"><template #cell="{ record }"><span v-if="record.provider === 'ollama'" class="muted-cell">无需密钥</span><span v-else>{{ record.hasApiKey ? '已安全配置' : '未配置' }}</span></template></a-table-column>
                 <a-table-column title="状态" :width="110"><template #cell="{ record }"><a-badge :status="record.isDefault ? 'success' : 'normal'" :text="record.isDefault ? '默认' : '可用'" /></template></a-table-column>
                 <a-table-column title="操作" :width="170" fixed="right"><template #cell="{ record }"><a-tag v-if="record.provider === 'ollama'">平台托管 · 可直接选择</a-tag><a-space v-else><a-button type="text" size="small" @click="editModelConfig(record)">配置</a-button><a-popconfirm content="删除后，引用该配置的角色将恢复使用默认模型。确定删除吗？" @ok="deleteModelConfig(record)"><a-button type="text" status="danger" size="small">删除</a-button></a-popconfirm></a-space></template></a-table-column>
               </template>
@@ -2976,12 +3223,12 @@ const app = createApp({
           </a-card>
 
           <a-drawer v-model:visible="modelDrawerOpen" :title="modelSettings.id ? '编辑模型配置' : '接入模型'" :width="720" :footer="false" unmount-on-close>
-            <a-form :model="modelSettings" layout="vertical" @submit.prevent="saveModelSettings">
+            <a-form :model="modelSettings" layout="vertical" @submit="saveModelSettings">
               <a-alert type="info" class="model-protocol-alert">在线模型通过 OpenAI Chat Completions 兼容协议交给 Pi Runtime 调用。平台私有模型由服务器统一配置，不在这里暴露部署信息。</a-alert>
               <div class="form-row"><a-form-item label="配置名称" required><a-input v-model="modelSettings.name" placeholder="如：研究专用 GLM" /></a-form-item><a-form-item label="模型提供方" required><a-select v-model="modelSettings.provider" @change="applyModelProviderDefaults"><a-option value="openai">OpenAI / 兼容 API</a-option><a-option value="glm">智谱 GLM</a-option><a-option value="minimax">MiniMax</a-option></a-select></a-form-item></div>
               <div class="form-row"><a-form-item label="模型 ID" required extra="填写服务端实际接受的模型标识"><a-input v-model="modelSettings.model" placeholder="如：gpt-5-mini、glm-4.5" /></a-form-item><a-form-item label="接口协议"><a-input model-value="OpenAI Chat Completions" disabled /></a-form-item></div>
               <a-form-item label="服务地址（Base URL）" required><a-input v-model="modelSettings.baseUrl" :placeholder="modelSettings.provider === 'ollama' ? 'http://127.0.0.1:11434' : 'https://api.openai.com/v1'" /></a-form-item>
-              <a-card v-if="modelSettings.provider !== 'ollama'" class="auth-config-card" title="访问认证"><a-form-item label="API Key 环境变量名" extra="Pi 服务运行时从服务器环境变量读取密钥，配置中只保存变量名。"><a-input v-model="modelSettings.apiKeyRef" placeholder="OPENAI_API_KEY" /></a-form-item></a-card>
+              <a-card v-if="modelSettings.provider !== 'ollama'" class="auth-config-card" title="访问认证"><a-form-item label="API Key" :extra="modelSettings.hasApiKey ? '密钥已安全保存；留空表示继续使用原密钥。' : '密钥将加密保存在 AlphaDock 服务器中，保存后不再回显。'"><a-input-password v-model="modelSettings.apiKey" placeholder="请输入模型服务商提供的 API Key" allow-clear /></a-form-item></a-card>
               <a-divider orientation="left">生成参数</a-divider>
               <div class="form-row"><a-form-item label="Temperature"><a-input-number v-model="modelSettings.temperature" :min="0" :max="2" :step="0.1" /></a-form-item><a-form-item label="推理强度"><a-select v-model="modelSettings.reasoningEffort"><a-option value="low">低</a-option><a-option value="medium">中</a-option><a-option value="high">高</a-option></a-select></a-form-item></div>
               <div class="form-row"><a-form-item label="最大输出 Token"><a-input-number v-model="modelSettings.maxOutputTokens" :min="256" :max="131072" /></a-form-item><a-form-item label="上下文预算 Token"><a-input-number v-model="modelSettings.contextBudgetTokens" :min="1024" :max="1048576" /></a-form-item></div>

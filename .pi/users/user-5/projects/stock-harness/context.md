@@ -1,1 +1,0 @@
-# stock-harness Context

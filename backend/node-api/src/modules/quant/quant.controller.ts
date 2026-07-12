@@ -81,7 +81,8 @@ export class QuantController {
       data_source: settings.dataSource,
       futu_host: settings.futuHost,
       futu_port: settings.futuPort,
-      provider_chains: Object.fromEntries(Object.entries(settings.providerChains).map(([market, chain]) => [market, chain.filter((key) => ["akshare", "baostock", "futu", "yfinance", "sec_edgar"].includes(key))])),
+      provider_chains: Object.fromEntries(Object.entries(settings.providerChains).map(([market, chain]) => [market, chain.filter((key) => ["akshare", "tushare", "baostock", "futu", "yfinance", "sec_edgar"].includes(key))])),
+      tushare_token: this.settings.getTushareToken(Number(req.user.sub)),
     };
   }
 

@@ -12,6 +12,19 @@ const props = defineProps({
 const container = ref(null);
 let chart;
 let resizeObserver;
+let themeObserver;
+
+function themeColors() {
+  const styles = getComputedStyle(document.documentElement);
+  const value = (name, fallback) => styles.getPropertyValue(name).trim() || fallback;
+  return {
+    background: value("--app-surface", "#ffffff"),
+    text: value("--app-text-muted", "#64748b"),
+    border: value("--app-border-strong", "#e2e8f0"),
+    grid: value("--app-border", "#eef2f7"),
+    crosshair: value("--app-text-secondary", "#334155"),
+  };
+}
 
 function formatValue(value) {
   if (props.valueFormat === "percent") return `${Number(value).toFixed(1)}%`;
@@ -31,24 +44,25 @@ function destroyChart() {
 function renderChart() {
   if (!container.value) return;
   destroyChart();
+  const colors = themeColors();
   chart = createChart(container.value, {
     width: container.value.clientWidth,
     height: props.height,
     layout: {
-      background: { type: ColorType.Solid, color: "#ffffff" },
-      textColor: "#64748b",
+      background: { type: ColorType.Solid, color: colors.background },
+      textColor: colors.text,
       fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
       attributionLogo: false,
     },
     grid: {
-      vertLines: { color: "#eef2f7" },
-      horzLines: { color: "#eef2f7" },
+      vertLines: { color: colors.grid },
+      horzLines: { color: colors.grid },
     },
-    rightPriceScale: { borderColor: "#e2e8f0" },
-    timeScale: { borderColor: "#e2e8f0", timeVisible: false },
+    rightPriceScale: { borderColor: colors.border },
+    timeScale: { borderColor: colors.border, timeVisible: false },
     crosshair: {
-      vertLine: { labelBackgroundColor: "#334155" },
-      horzLine: { labelBackgroundColor: "#334155" },
+      vertLine: { labelBackgroundColor: colors.crosshair },
+      horzLine: { labelBackgroundColor: colors.crosshair },
     },
     localization: { locale: props.locale, priceFormatter: formatValue },
   });
@@ -73,9 +87,18 @@ function renderChart() {
   resizeObserver.observe(container.value);
 }
 
-onMounted(renderChart);
+onMounted(() => {
+  renderChart();
+  themeObserver = new MutationObserver((mutations) => {
+    if (mutations.some((mutation) => mutation.attributeName === "data-theme")) renderChart();
+  });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+});
 watch(() => [props.series, props.height, props.locale, props.valueFormat], renderChart, { deep: true });
-onBeforeUnmount(destroyChart);
+onBeforeUnmount(() => {
+  themeObserver?.disconnect();
+  destroyChart();
+});
 </script>
 
 <template>
@@ -83,5 +106,5 @@ onBeforeUnmount(destroyChart);
 </template>
 
 <style scoped>
-.unified-time-series-chart { width: 100%; min-height: 300px; }
+.unified-time-series-chart { width: 100%; min-height: 300px; background: var(--app-surface); }
 </style>

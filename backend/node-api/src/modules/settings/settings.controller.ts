@@ -1,4 +1,4 @@
-import { BadGatewayException, Body, Controller, Delete, Get, Inject, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
+import { BadGatewayException, Body, Controller, Delete, ForbiddenException, Get, Inject, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
 import { SettingsRepository, DataSourceSettings, DisplaySettings, HttpDataSource, ModelSettings } from "./settings.repository";
 import { createHmac } from "node:crypto";
@@ -44,6 +44,27 @@ export class SettingsController {
       if (error instanceof BadGatewayException) {
         throw error;
       }
+      throw new BadGatewayException(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  @Post("data-source/test-tushare")
+  async testTushare(@Req() req: AuthenticatedRequest, @Body() body: Partial<DataSourceSettings>) {
+    const userId = Number(req.user.sub);
+    const submitted = String(body.tushareToken ?? "").trim();
+    const token = submitted || this.settings.getTushareToken(userId);
+    if (!token) throw new BadGatewayException("请先填写 Tushare Token");
+    const baseUrl = process.env.PYTHON_CORE_URL ?? "http://127.0.0.1:8765";
+    try {
+      const response = await fetch(`${baseUrl}/tushare/test-connection`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tushare_token: token }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new BadGatewayException(payload.detail ?? "Tushare 连接测试失败");
+      return { ok: true, message: "Tushare Token 验证成功，Python Core 已连接。", detail: payload };
+    } catch (error) {
+      if (error instanceof BadGatewayException) throw error;
       throw new BadGatewayException(error instanceof Error ? error.message : String(error));
     }
   }
@@ -96,13 +117,50 @@ export class SettingsController {
   @Get("models")
   listModels(@Req() req: AuthenticatedRequest) { return this.settings.listModels(Number(req.user.sub)); }
 
+  @Get("system-private-models")
+  async listSystemPrivateModels(@Req() req: AuthenticatedRequest) {
+    const baseUrl = this.settings.getSystemOllamaBaseUrl();
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/tags`);
+    const payload = await response.json().catch(() => ({})) as any;
+    if (!response.ok) throw new BadGatewayException(payload.error ?? "无法读取 Ollama 模型列表");
+    const states = new Map(this.settings.privateModelStates().map((item) => [item.model, item]));
+    return {
+      isAdmin: req.user.role === "admin",
+      baseUrl,
+      models: (Array.isArray(payload.models) ? payload.models : []).map((item: any) => ({
+        model: String(item.name || ""), size: Number(item.size || 0), modifiedAt: item.modified_at || null,
+        enabled: states.get(String(item.name || "")) ? Boolean(states.get(String(item.name || ""))!.enabled) : true,
+        baseUrl: states.get(String(item.name || ""))?.base_url || baseUrl,
+      })).filter((item: any) => item.model),
+    };
+  }
+
+  @Put("system-private-models/config")
+  setSystemPrivateModelConfig(@Req() req: AuthenticatedRequest, @Body() body: { baseUrl?: string }) {
+    if (req.user.role !== "admin") throw new ForbiddenException("仅管理员可以修改系统私有模型服务地址");
+    return this.settings.setSystemOllamaBaseUrl(String(body.baseUrl || ""), Number(req.user.sub));
+  }
+
+  @Put("system-private-models/:model/enabled")
+  setSystemPrivateModelEnabled(@Req() req: AuthenticatedRequest, @Param("model") model: string, @Body() body: { enabled?: boolean }) {
+    if (req.user.role !== "admin") throw new ForbiddenException("仅管理员可以启用或禁用系统私有模型");
+    return this.settings.setPrivateModelEnabled(model, body.enabled !== false, Number(req.user.sub));
+  }
+
+  @Put("system-private-models/:model/config")
+  setSystemPrivateModelEndpoint(@Req() req: AuthenticatedRequest, @Param("model") model: string, @Body() body: { baseUrl?: string }) {
+    if (req.user.role !== "admin") throw new ForbiddenException("仅管理员可以修改私有模型服务地址");
+    return this.settings.setPrivateModelBaseUrl(model, String(body.baseUrl || ""), Number(req.user.sub));
+  }
+
   @Post("models")
   saveModelEntry(@Req() req: AuthenticatedRequest, @Body() body: Partial<ModelSettings>) { return this.settings.saveModelEntry(Number(req.user.sub), body); }
 
   @Post("models/test-connection")
   async testModelEntry(@Req() req: AuthenticatedRequest, @Body() body: Partial<ModelSettings>) {
-    const entry = this.settings.saveModelEntry(Number(req.user.sub), body);
-    return entry.provider === "ollama" ? this.testOllama(entry) : this.testOpenAi(entry);
+    const userId = Number(req.user.sub);
+    const entry = this.settings.saveModelEntry(userId, body);
+    return entry.provider === "ollama" ? this.testOllama(entry) : this.testOpenAi(entry, this.settings.getModelApiKey(userId, entry.id));
   }
 
   @Put("models/:id")
@@ -117,7 +175,7 @@ export class SettingsController {
     if (settings.provider !== "ollama") {
       return { provider: settings.provider, models: [settings.model].filter(Boolean) };
     }
-    return { provider: settings.provider, models: await this.listOllamaModels(settings) };
+      return { provider: settings.provider, models: (await this.listOllamaModels(settings)).filter((model: string) => this.settings.isPrivateModelEnabled(model)) };
   }
 
   @Put("model")
@@ -163,9 +221,8 @@ export class SettingsController {
     }
   }
 
-  private async testOpenAi(settings: ModelSettings) {
-    const apiKey = settings.apiKeyRef ? process.env[settings.apiKeyRef] : "";
-    if (!apiKey) throw new BadGatewayException(`未找到 API Key 环境变量：${settings.apiKeyRef || "未配置"}`);
+  private async testOpenAi(settings: ModelSettings, apiKey: string) {
+    if (!apiKey) throw new BadGatewayException("请先填写 API Key");
     try {
       const response = await fetch(`${settings.baseUrl.replace(/\/$/, "")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
       const payload = await response.json().catch(() => ({})) as any;

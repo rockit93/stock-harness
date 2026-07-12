@@ -8,7 +8,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .data import BarInterval, DataSource, Market, load_daily_bars, lookup_symbols, test_futu_connection
+from .data import BarInterval, DataSource, Market, load_daily_bars, lookup_symbols, test_futu_connection, test_tushare_connection
 from .engine import run_backtest
 from .fundamentals import load_fundamentals
 from .json_strategy import JsonRuleStrategy, validate_strategy_definition
@@ -31,6 +31,7 @@ class BarsRequest(BaseModel):
     interval: BarInterval = BarInterval.DAY
     range: Literal["day", "week", "month", "halfYear", "year"] | None = None
     provider_chains: dict[str, list[str]] = Field(default_factory=dict)
+    tushare_token: str = ""
 
 
 class SymbolLookupRequest(BaseModel):
@@ -45,6 +46,10 @@ class SymbolLookupRequest(BaseModel):
 class FutuConnectionRequest(BaseModel):
     futu_host: str = "127.0.0.1"
     futu_port: int = 11111
+
+
+class TushareConnectionRequest(BaseModel):
+    tushare_token: str
 
 
 class FundamentalsRequest(BaseModel):
@@ -128,6 +133,7 @@ def bars(request: BarsRequest) -> dict[str, Any]:
             futu_port=request.futu_port,
             interval=request.interval,
             provider_chains=request.provider_chains,
+            tushare_token=request.tushare_token,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -195,6 +201,14 @@ def futu_test_connection(request: FutuConnectionRequest) -> dict[str, Any]:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.post("/tushare/test-connection")
+def tushare_test_connection(request: TushareConnectionRequest) -> dict[str, Any]:
+    try:
+        return test_tushare_connection(request.tushare_token)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/backtest")
 def backtest(request: BacktestRequest) -> dict[str, Any]:
     if request.start >= request.end:
@@ -234,6 +248,7 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
             futu_port=request.futu_port,
             interval=request.interval,
             provider_chains=request.provider_chains,
+            tushare_token=request.tushare_token,
         )
         result = run_backtest(
             bars=frame,

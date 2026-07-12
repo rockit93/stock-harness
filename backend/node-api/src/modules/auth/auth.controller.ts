@@ -29,6 +29,7 @@ export class AuthController {
       user: {
         id: Number(req.user.sub),
         username: req.user.username,
+        role: req.user.role,
       },
     };
   }

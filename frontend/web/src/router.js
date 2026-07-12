@@ -4,7 +4,7 @@ import { createRouter, createWebHistory } from "vue-router";
 export const moduleRoutes = {
   dashboard: { name: "dashboard", path: "/dashboard" },
   "label-strategies": { name: "label-strategies", path: "/strategies/labels" },
-  "pi-chat": { name: "pi-chat", path: "/pi/chat" },
+  "pi-chat": { name: "pi-chat", path: "/chat/:projectId/:conversationId" },
   "pi-projects": { name: "pi-projects", path: "/pi/projects" },
   "pi-tasks": { name: "pi-tasks", path: "/pi/tasks" },
   "pi-roles": { name: "pi-roles", path: "/pi/roles" },
@@ -12,6 +12,7 @@ export const moduleRoutes = {
   "pi-plugins": { name: "pi-plugins", path: "/pi/plugins" },
   "data-sources": { name: "data-sources", path: "/system/data-sources" },
   models: { name: "models", path: "/system/models" },
+  "model-monitoring": { name: "model-monitoring", path: "/system/model-monitoring" },
   "display-settings": { name: "display-settings", path: "/system/display" },
   "backtest-strategies": { name: "backtest-strategies", path: "/strategies/backtest" },
 };
@@ -26,6 +27,16 @@ export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: "/", redirect: moduleRoutes.dashboard.path },
+    {
+      path: "/pi/chat",
+      redirect: (to) => ({
+        name: "pi-chat",
+        params: {
+          projectId: to.query.project || "my",
+          conversationId: to.query.conversation || "new",
+        },
+      }),
+    },
     { path: "/settings", redirect: moduleRoutes["data-sources"].path },
     { path: "/system/backtest-strategies", redirect: moduleRoutes["backtest-strategies"].path },
     ...routes,

@@ -14,14 +14,21 @@ const tab = ref("strategies");
 const saving = ref(false);
 const debugging = ref(false);
 const editorVisible = ref(false);
+const paperDrawerVisible = ref(false);
 const selectedResult = ref(null);
 const batchResults = ref([]);
+const selectedSymbols = ref([]);
+const remoteSymbolOptions = ref([]);
+const symbolSearching = ref(false);
+let symbolSearchTimer = null;
+let symbolSearchSequence = 0;
 const editor = reactive({ id: null, name: "新回测策略", description: "", definitionText: "" });
 const debugForm = reactive({
   market: "A Share", symbolsText: "", start: "2023-01-01", end: new Date().toISOString().slice(0, 10),
   strategy: "ma_cross", cash: 100000, commission_bps: 3,
 });
 const paperRuns = ref(JSON.parse(localStorage.getItem("stock-harness-paper-runs") || "[]"));
+const paperForm = reactive({ name: "模拟运行", market: "A Share", strategy: "ma_cross", intervalMinutes: 5, defaultCapital: 100000, accounts: [] });
 const timers = new Map();
 
 const customStrategies = computed(() => props.strategies.filter((item) => item.source === "custom"));
@@ -29,7 +36,27 @@ const subscribedSymbols = computed(() => props.subscriptions
   .filter((item) => item.market === debugForm.market)
   .map((item) => String(item.symbol || "").trim())
   .filter(Boolean));
-function useSubscribedSymbols() { debugForm.symbolsText = [...new Set(subscribedSymbols.value)].join("\n"); }
+const dateRange = computed({
+  get: () => [debugForm.start, debugForm.end],
+  set: (value) => { [debugForm.start, debugForm.end] = Array.isArray(value) ? value : ["", ""]; },
+});
+const effectiveSymbols = computed(() => [...new Set([
+  ...selectedSymbols.value.map(String), ...symbols(debugForm.symbolsText),
+].map((item) => item.trim()).filter(Boolean))]);
+function subscriptionOptions() {
+  return props.subscriptions
+    .filter((item) => item.market === debugForm.market && item.symbol)
+    .map((item) => ({ symbol: String(item.symbol), name: item.stockName || item.name || "", market: item.market }));
+}
+function mergeSymbolOptions(items) {
+  const merged = new Map([...subscriptionOptions(), ...remoteSymbolOptions.value, ...items].map((item) => [String(item.symbol), item]));
+  remoteSymbolOptions.value = [...merged.values()];
+}
+function useSubscribedSymbols() {
+  selectedSymbols.value = [...new Set(subscribedSymbols.value)];
+  debugForm.symbolsText = "";
+  remoteSymbolOptions.value = subscriptionOptions();
+}
 watch([() => debugForm.market, () => props.subscriptions], useSubscribedSymbols, { immediate: true, deep: true });
 const defaultDefinition = () => ({
   indicators: { fast: { type: "sma", period: 10 }, slow: { type: "sma", period: 30 } },
@@ -39,6 +66,23 @@ const defaultDefinition = () => ({
 });
 
 function symbols(text) { return [...new Set(text.split(/[\s,，;；]+/).map((v) => v.trim()).filter(Boolean))]; }
+function searchSymbols(keyword) {
+  window.clearTimeout(symbolSearchTimer);
+  const clean = String(keyword || "").trim();
+  if (!clean) { remoteSymbolOptions.value = subscriptionOptions(); return; }
+  const sequence = ++symbolSearchSequence;
+  symbolSearchTimer = window.setTimeout(async () => {
+    symbolSearching.value = true;
+    try {
+      const payload = await props.request("/symbols/lookup", {
+        method: "POST", body: JSON.stringify({ market: debugForm.market, keyword: clean, limit: 20 }),
+      });
+      if (sequence === symbolSearchSequence) mergeSymbolOptions(payload.symbols || []);
+    } finally {
+      if (sequence === symbolSearchSequence) symbolSearching.value = false;
+    }
+  }, 280);
+}
 function openEditor(strategy) {
   Object.assign(editor, strategy ? {
     id: strategy.id, name: strategy.name, description: strategy.description || "", definitionText: JSON.stringify(strategy.definition, null, 2),
@@ -66,7 +110,7 @@ async function runBatch() {
   debugging.value = true;
   batchResults.value = [];
   selectedResult.value = null;
-  const list = symbols(debugForm.symbolsText);
+  const list = effectiveSymbols.value;
   const settled = await Promise.allSettled(list.map((symbol) => props.request("/backtest", {
     method: "POST",
     body: JSON.stringify({ ...debugForm, symbol, strategy_params: {}, adjust: "qfq" }),
@@ -78,10 +122,26 @@ async function runBatch() {
   debugging.value = false;
 }
 function persistPaperRuns() { localStorage.setItem("stock-harness-paper-runs", JSON.stringify(paperRuns.value)); }
+function availablePaperStocks() { return props.subscriptions.filter((item) => item.market === paperForm.market && item.symbol); }
+function resetPaperAccounts() {
+  const existing = new Map(paperForm.accounts.map((item) => [item.symbol, item]));
+  paperForm.accounts = availablePaperStocks().map((stock) => ({
+    symbol: String(stock.symbol), name: stock.stockName || stock.name || "", selected: existing.get(String(stock.symbol))?.selected ?? true,
+    initialCapital: existing.get(String(stock.symbol))?.initialCapital ?? paperForm.defaultCapital, lotSize: paperForm.market === "A Share" ? 100 : 1,
+  }));
+}
+function applyDefaultCapital() { paperForm.accounts.forEach((account) => { account.initialCapital = paperForm.defaultCapital; }); }
+function openPaperDrawer() {
+  Object.assign(paperForm, { name: "模拟运行", market: "A Share", strategy: "ma_cross", intervalMinutes: 5, defaultCapital: 100000, accounts: [] });
+  resetPaperAccounts(); paperDrawerVisible.value = true;
+}
 function addPaperRun() {
-  const defaultSymbols = [...new Set(props.subscriptions.filter((item) => item.market === "A Share").map((item) => item.symbol).filter(Boolean))].join(", ");
-  paperRuns.value.push({ id: Date.now(), name: "模拟运行", market: "A Share", strategy: "ma_cross", symbolsText: defaultSymbols, intervalMinutes: 5, active: false, lastRunAt: null, status: "尚未运行", results: [] });
-  persistPaperRuns();
+  const accounts = paperForm.accounts.filter((item) => item.selected).map((item) => ({ ...item, cash: item.initialCapital, position: 0 }));
+  if (!accounts.length) return;
+  paperRuns.value.push({ id: Date.now(), name: paperForm.name.trim() || "模拟运行", market: paperForm.market, strategy: paperForm.strategy,
+    symbolsText: accounts.map((item) => item.symbol).join(", "), intervalMinutes: paperForm.intervalMinutes, accounts,
+    createdAt: new Date().toISOString(), active: false, lastRunAt: null, status: "尚未运行", results: [] });
+  persistPaperRuns(); paperDrawerVisible.value = false;
 }
 async function executePaperRun(run) {
   run.status = "运行中";
@@ -104,7 +164,10 @@ function togglePaperRun(run) {
   persistPaperRuns();
 }
 function removePaperRun(run) { window.clearInterval(timers.get(run.id)); timers.delete(run.id); paperRuns.value = paperRuns.value.filter((item) => item.id !== run.id); persistPaperRuns(); }
-onBeforeUnmount(() => timers.forEach((timer) => window.clearInterval(timer)));
+onBeforeUnmount(() => {
+  window.clearTimeout(symbolSearchTimer);
+  timers.forEach((timer) => window.clearInterval(timer));
+});
 </script>
 
 <template>
@@ -135,25 +198,44 @@ onBeforeUnmount(() => timers.forEach((timer) => window.clearInterval(timer)));
       <a-tab-pane key="debug" title="批量调试">
         <a-card class="debug-card" :bordered="false"><a-form :model="debugForm" layout="vertical">
           <div class="form-row"><a-form-item label="市场"><a-select v-model="debugForm.market"><a-option value="A Share">A 股</a-option><a-option value="Hong Kong">港股</a-option><a-option value="US">美股</a-option></a-select></a-form-item><a-form-item label="策略"><a-select v-model="debugForm.strategy"><a-option v-for="strategy in strategies" :key="strategy.key" :value="strategy.key">{{ strategy.label || strategy.name }}</a-option></a-select></a-form-item></div>
-          <a-form-item label="股票代码（换行、逗号或空格分隔）">
-            <a-textarea v-model="debugForm.symbolsText" :placeholder="subscribedSymbols.length ? '已带入当前市场的订阅股票' : '当前市场暂无订阅股票，也可以手动输入代码'" :auto-size="{ minRows: 3, maxRows: 6 }" />
-            <template #extra><div class="subscription-symbol-hint"><span>{{ subscribedSymbols.length ? `已带入 ${subscribedSymbols.length} 只订阅股票` : '当前市场暂无订阅股票' }}</span><a-button v-if="subscribedSymbols.length" type="text" size="mini" @click="useSubscribedSymbols">重新载入订阅股票</a-button></div></template>
-          </a-form-item>
-          <div class="form-row"><a-form-item label="开始日期"><a-date-picker v-model="debugForm.start" value-format="YYYY-MM-DD" /></a-form-item><a-form-item label="结束日期"><a-date-picker v-model="debugForm.end" value-format="YYYY-MM-DD" /></a-form-item></div>
-          <a-button type="primary" :loading="debugging" :disabled="!symbols(debugForm.symbolsText).length" @click="runBatch">批量运行回测</a-button>
+          <div class="symbol-input-grid">
+            <a-form-item label="搜索选择股票">
+              <a-select v-model="selectedSymbols" multiple allow-search :filter-option="false" :loading="symbolSearching" placeholder="输入股票代码或名称远程搜索" @search="searchSymbols">
+                <a-option v-for="item in remoteSymbolOptions" :key="item.symbol" :value="item.symbol"><span>{{ item.symbol }}</span><small class="symbol-option-name">{{ item.name || '未命名股票' }}</small></a-option>
+              </a-select>
+              <template #extra><div class="subscription-symbol-hint"><span>已选择 {{ selectedSymbols.length }} 只股票</span><a-button v-if="subscribedSymbols.length" type="text" size="mini" @click="useSubscribedSymbols">载入订阅股票</a-button></div></template>
+            </a-form-item>
+            <a-form-item label="批量输入股票代码">
+              <a-textarea v-model="debugForm.symbolsText" placeholder="支持换行、逗号或空格分隔，例如：000021, 000725" :auto-size="{ minRows: 3, maxRows: 6 }" />
+              <template #extra>搜索选择与批量输入会自动合并去重，共 {{ effectiveSymbols.length }} 只股票</template>
+            </a-form-item>
+          </div>
+          <a-form-item label="回测日期范围"><a-range-picker v-model="dateRange" value-format="YYYY-MM-DD" style="width: 100%" /></a-form-item>
+          <a-button type="primary" :loading="debugging" :disabled="!effectiveSymbols.length || !debugForm.start || !debugForm.end" @click="runBatch">批量运行回测</a-button>
         </a-form></a-card>
         <a-table v-if="batchResults.length" :data="batchResults" :pagination="false" row-key="symbol" class="result-table"><template #columns><a-table-column title="股票" data-index="symbol"/><a-table-column title="策略收益"><template #cell="{ record }">{{ record.ok ? pct(record.result.stats.total_return) : '失败' }}</template></a-table-column><a-table-column title="最大回撤"><template #cell="{ record }">{{ record.ok ? pct(record.result.stats.max_drawdown) : record.error }}</template></a-table-column><a-table-column title="胜率"><template #cell="{ record }">{{ record.ok ? pct(record.result.stats.win_rate) : '-' }}</template></a-table-column><a-table-column title="操作"><template #cell="{ record }"><a-button v-if="record.ok" type="text" @click="selectedResult = record.result">查看图表</a-button></template></a-table-column></template></a-table>
         <BacktestResults v-if="selectedResult" :result="selectedResult" :pct="pct" />
       </a-tab-pane>
       <a-tab-pane key="paper" title="模拟运行">
-        <div class="paper-toolbar"><p>按设定间隔重新计算策略，记录最近模拟表现。</p><a-button @click="addPaperRun">新增模拟任务</a-button></div>
+        <div class="paper-toolbar"><p>从任务创建时刻开始监听策略信号，按每只股票的独立资金池模拟成交。</p><a-button type="primary" @click="openPaperDrawer">新增模拟任务</a-button></div>
         <a-card v-for="run in paperRuns" :key="run.id" class="paper-card" :bordered="false">
           <div class="paper-grid"><a-input v-model="run.name" placeholder="任务名称"/><a-select v-model="run.strategy"><a-option v-for="strategy in strategies" :key="strategy.key" :value="strategy.key">{{ strategy.label || strategy.name }}</a-option></a-select><a-input v-model="run.symbolsText" placeholder="600519, 000001"/><a-input-number v-model="run.intervalMinutes" :min="1"><template #suffix>分钟</template></a-input-number></div>
           <div class="paper-status"><a-badge :status="run.active ? 'processing' : 'default'" :text="run.status"/><span>最近运行：{{ run.lastRunAt || '—' }}</span><a-button size="small" @click="executePaperRun(run)">立即运行</a-button><a-button size="small" :status="run.active ? 'warning' : 'success'" @click="togglePaperRun(run)">{{ run.active ? '停止盯盘' : '启动盯盘' }}</a-button><a-button size="small" status="danger" @click="removePaperRun(run)">删除</a-button></div>
+          <div v-if="run.accounts?.length" class="paper-account-list"><span v-for="account in run.accounts" :key="account.symbol"><strong>{{ account.symbol }}</strong>{{ account.name ? ` · ${account.name}` : '' }}<em>资金池 {{ Number(account.initialCapital).toLocaleString('zh-CN') }} · {{ account.lotSize }} 股/手</em></span></div>
           <div v-if="run.results?.length" class="paper-result-list"><span v-for="item in run.results" :key="item.symbol"><strong>{{ item.symbol }}</strong>：{{ item.lastOrder ? `${item.lastOrder.date} 模拟${item.lastOrder.side === 'buy' ? '买入' : '卖出'} @ ${Number(item.lastOrder.price).toFixed(2)}` : '暂无交易信号' }}</span></div>
         </a-card>
       </a-tab-pane>
     </a-tabs>
+    <a-drawer v-model:visible="paperDrawerVisible" title="新建模拟任务" :width="620" :ok-button-props="{ disabled: !paperForm.accounts.some(item => item.selected) }" @ok="addPaperRun">
+      <a-form :model="paperForm" layout="vertical" class="paper-create-form">
+        <a-form-item label="任务名称"><a-input v-model="paperForm.name" maxlength="60" placeholder="例如：双均线订阅股模拟盘" /></a-form-item>
+        <div class="form-row"><a-form-item label="市场"><a-select v-model="paperForm.market" @change="resetPaperAccounts"><a-option value="A Share">A 股</a-option><a-option value="Hong Kong">港股</a-option><a-option value="US">美股</a-option></a-select></a-form-item><a-form-item label="策略"><a-select v-model="paperForm.strategy"><a-option v-for="strategy in strategies" :key="strategy.key" :value="strategy.key">{{ strategy.label || strategy.name }}</a-option></a-select></a-form-item></div>
+        <div class="form-row"><a-form-item label="检查间隔"><a-input-number v-model="paperForm.intervalMinutes" :min="1"><template #suffix>分钟</template></a-input-number></a-form-item><a-form-item label="默认资金池"><a-input-number v-model="paperForm.defaultCapital" :min="1" :precision="2" @change="applyDefaultCapital"><template #prefix>¥</template></a-input-number></a-form-item></div>
+        <div class="paper-stock-head"><div><strong>模拟股票与资金池</strong><small>A 股按 100 股整数倍，美股按 1 股整数倍模拟成交。</small></div><a-button size="mini" @click="applyDefaultCapital">统一应用资金</a-button></div>
+        <div v-if="paperForm.accounts.length" class="paper-stock-list"><div v-for="account in paperForm.accounts" :key="account.symbol" class="paper-stock-row"><a-checkbox v-model="account.selected" /><div class="paper-stock-name"><strong>{{ account.symbol }}</strong><small>{{ account.name || '未命名股票' }}</small></div><a-input-number v-model="account.initialCapital" :min="1" :precision="2" :disabled="!account.selected"><template #prefix>¥</template></a-input-number><a-tag>{{ account.lotSize }} 股/手</a-tag></div></div>
+        <a-empty v-else description="当前市场没有订阅股票，请先添加订阅。" />
+      </a-form>
+    </a-drawer>
     <a-modal v-model:visible="editorVisible" :title="editor.id ? '编辑回测策略' : '新建回测策略'" width="720px" :ok-loading="saving" @ok="saveStrategy"><a-form :model="editor" layout="vertical"><a-form-item label="策略名称"><a-input v-model="editor.name" maxlength="80"/></a-form-item><a-form-item label="策略说明"><a-input v-model="editor.description"/></a-form-item><a-form-item label="规则定义（JSON）"><a-textarea v-model="editor.definitionText" class="json-editor" :auto-size="{ minRows: 16, maxRows: 24 }"/></a-form-item></a-form></a-modal>
   </section>
 </template>
@@ -187,6 +269,9 @@ onBeforeUnmount(() => timers.forEach((timer) => window.clearInterval(timer)));
 .muted-value { color: var(--app-text-muted); }
 .subscription-symbol-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; color: var(--app-text-muted); }
 .subscription-symbol-hint :deep(.arco-btn) { padding-inline: 0; color: var(--app-accent-soft); }
+.symbol-input-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.symbol-option-name { margin-left: 10px; color: var(--app-text-muted); }
+.debug-card :deep(.arco-select-view-multiple) { min-height: 38px; background: var(--app-surface-raised); }
 .strategy-grid { grid-template-columns: repeat(auto-fill, minmax(390px, 1fr)); gap: 16px; }
 .strategy-card { border-color: var(--app-border) !important; background: var(--app-surface) !important; box-shadow: 0 9px 26px var(--app-shadow); transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .strategy-card:hover { border-color: var(--app-border-strong) !important; box-shadow: 0 14px 34px var(--app-shadow); transform: translateY(-2px); }
@@ -206,6 +291,14 @@ onBeforeUnmount(() => timers.forEach((timer) => window.clearInterval(timer)));
 .paper-toolbar { border: 1px solid var(--app-border); border-radius: 10px; padding: 12px 14px; background: var(--app-surface); }
 .paper-toolbar p { margin: 0; color: var(--app-text-muted); }
 .paper-result-list span { border: 1px solid var(--app-border); background: var(--app-surface-soft); color: var(--app-text-secondary); }
-@media(max-width:980px){.strategy-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:700px){.strategy-workbench{padding-inline:0}.workbench-head{align-items:flex-start;flex-direction:column}.workbench-head :deep(.arco-btn){width:100%}.strategy-stats{grid-template-columns:1fr 1fr}.strategy-grid{grid-template-columns:1fr}}
+.paper-account-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.paper-account-list span { display: grid; gap: 2px; border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px; background: var(--app-surface-soft); color: var(--app-text-secondary); font-size: 12px; }
+.paper-account-list em { color: var(--app-text-muted); font-style: normal; }
+.paper-stock-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 10px; }
+.paper-stock-head > div, .paper-stock-name { display: grid; gap: 3px; }
+.paper-stock-head small, .paper-stock-name small { color: var(--app-text-muted); }
+.paper-stock-list { display: grid; gap: 8px; }
+.paper-stock-row { display: grid; grid-template-columns: auto minmax(110px, 1fr) minmax(180px, 1.3fr) auto; align-items: center; gap: 10px; border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px; background: var(--app-surface-soft); }
+@media(max-width:980px){.strategy-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.symbol-input-grid{grid-template-columns:1fr}}
+@media(max-width:700px){.strategy-workbench{padding-inline:0}.workbench-head{align-items:flex-start;flex-direction:column}.workbench-head :deep(.arco-btn){width:100%}.strategy-stats{grid-template-columns:1fr 1fr}.strategy-grid{grid-template-columns:1fr}.paper-stock-row{grid-template-columns:auto 1fr}.paper-stock-row :deep(.arco-input-wrapper),.paper-stock-row :deep(.arco-tag){grid-column:2}}
 </style>

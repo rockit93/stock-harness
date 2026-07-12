@@ -8,7 +8,7 @@ export type RuntimeRole = { id: number; name: string; responsibility: string; sy
 export type RuntimeSkill = { id: number; name: string; description: string; content: string };
 export type RuntimePlugin = { id: number; name: string; description: string; code: string; status: string };
 export type RuntimeMessage = { role: "user" | "assistant"; content: string; thinking: string; trace: unknown; role_id: number | null; role_name: string | null; created_at: string };
-export type RuntimeConversation = { id: number; project_id: number | null; role_id: number | null; model: string; title: string; created_at: string; updated_at: string };
+export type RuntimeConversation = { id: number; project_id: number | null; role_id: number | null; model: string; title: string; archived_at: string | null; created_at: string; updated_at: string };
 export type RuntimeProject = { id: number; name: string; description: string; instructions: string; archived_at: string | null; created_at: string; updated_at: string };
 
 @Injectable()
@@ -61,6 +61,7 @@ export class PiRuntimeRepository {
     this.ensureColumn("pi_messages", "thinking", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("pi_messages", "trace_json", "TEXT");
     this.ensureColumn("pi_conversations", "project_id", "INTEGER");
+    this.ensureColumn("pi_conversations", "archived_at", "TEXT");
     this.ensureColumn("pi_projects", "archived_at", "TEXT");
   }
 
@@ -108,10 +109,10 @@ export class PiRuntimeRepository {
     return Number(result.lastInsertRowid);
   }
 
-  listConversations(userId: number, limit = 30) {
+  listConversations(userId: number, limit = 100) {
     const conversations = this.db
       .prepare(`
-        SELECT id, project_id, role_id, model, title, created_at, updated_at
+        SELECT id, project_id, role_id, model, title, archived_at, created_at, updated_at
         FROM pi_conversations
         WHERE user_id = ?
         ORDER BY updated_at DESC, id DESC
@@ -130,6 +131,21 @@ export class PiRuntimeRepository {
       .get(userId, conversationId) as { id: number; project_id: number | null; role_id: number | null; model: string; title: string } | undefined;
     if (!conversation) throw new BadRequestException("会话不存在或不属于当前用户");
     return conversation;
+  }
+
+  renameConversation(userId: number, conversationId: number, titleInput: string) {
+    this.getConversation(userId, conversationId);
+    const title = String(titleInput ?? "").trim().replace(/\s+/g, " ").slice(0, 60);
+    if (!title) throw new BadRequestException("会话名称不能为空");
+    this.db.prepare("UPDATE pi_conversations SET title = ? WHERE user_id = ? AND id = ?").run(title, userId, conversationId);
+    return { ...this.getConversation(userId, conversationId), title };
+  }
+
+  setConversationArchived(userId: number, conversationId: number, archived: boolean) {
+    this.getConversation(userId, conversationId);
+    const archivedAt = archived ? new Date().toISOString() : null;
+    this.db.prepare("UPDATE pi_conversations SET archived_at = ? WHERE user_id = ? AND id = ?").run(archivedAt, userId, conversationId);
+    return { ...this.getConversation(userId, conversationId), archived_at: archivedAt };
   }
 
   listProjects(userId: number) {

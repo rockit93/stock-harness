@@ -7,7 +7,7 @@ Use this skill when adding, debugging, or extending market-data access in the lo
 - Treat this as one provider-neutral data-source capability.
 - Read the current user's per-market provider chain at runtime.
 - Call providers in configured order and fall back to the next provider after a diagnosable failure.
-- Futu, AkShare, Yahoo Finance, SEC EDGAR, and custom HTTP sources are providers, not separate skills.
+- Futu, AkShare, Tushare Pro, Yahoo Finance, SEC EDGAR, and custom HTTP sources are providers, not separate skills.
 - Never silently replace the user's selected route with a preferred provider.
 
 ## Normalization

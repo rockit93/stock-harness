@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,8 @@ export type DataSourceSettings = {
   providerChains: Record<"A Share" | "Hong Kong" | "US", string[]>;
   futuHost: string;
   futuPort: number;
+  tushareToken?: string;
+  hasTushareToken: boolean;
   updatedAt: string | null;
 };
 
@@ -24,6 +27,8 @@ export type ModelSettings = {
   model: string;
   baseUrl: string;
   apiKeyRef: string | null;
+  apiKey?: string;
+  hasApiKey?: boolean;
   temperature: number;
   maxOutputTokens: number;
   contextBudgetTokens: number;
@@ -47,6 +52,7 @@ type SettingsRow = {
   updated_at: string;
   provider_chains?: string;
   display_preferences?: string;
+  tushare_token_ciphertext?: string;
 };
 
 type ModelSettingsRow = {
@@ -65,11 +71,13 @@ type ModelSettingsRow = {
 @Injectable()
 export class SettingsRepository {
   private readonly db: DatabaseSync;
+  private readonly credentialKey: Buffer;
 
   constructor() {
     const dirname = path.dirname(fileURLToPath(import.meta.url));
     const dataDir = path.resolve(dirname, "../../../data");
     mkdirSync(dataDir, { recursive: true });
+    this.credentialKey = this.loadCredentialKey(dataDir);
     this.db = new DatabaseSync(path.join(dataDir, "auth.sqlite"));
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS user_settings (
@@ -99,6 +107,7 @@ export class SettingsRepository {
         model TEXT NOT NULL,
         base_url TEXT NOT NULL,
         api_key_ref TEXT,
+        api_key_ciphertext TEXT,
         temperature REAL NOT NULL,
         max_output_tokens INTEGER NOT NULL,
         context_budget_tokens INTEGER NOT NULL,
@@ -112,6 +121,19 @@ export class SettingsRepository {
         version INTEGER NOT NULL,
         applied_at TEXT NOT NULL,
         PRIMARY KEY (user_id, version)
+      );
+      CREATE TABLE IF NOT EXISTS system_private_models (
+        model TEXT PRIMARY KEY,
+        base_url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        updated_by INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS system_model_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        ollama_base_url TEXT NOT NULL,
+        updated_by INTEGER,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS user_http_data_sources (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL,
@@ -128,6 +150,45 @@ export class SettingsRepository {
     if (!columns.some((column) => column.name === "display_preferences")) {
       this.db.exec("ALTER TABLE user_settings ADD COLUMN display_preferences TEXT");
     }
+    if (!columns.some((column) => column.name === "tushare_token_ciphertext")) {
+      this.db.exec("ALTER TABLE user_settings ADD COLUMN tushare_token_ciphertext TEXT");
+    }
+    for (const table of ["user_model_settings", "user_models"]) {
+      const modelColumns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!modelColumns.some((column) => column.name === "api_key_ciphertext")) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN api_key_ciphertext TEXT`);
+      }
+    }
+    const privateModelColumns = this.db.prepare("PRAGMA table_info(system_private_models)").all() as Array<{ name: string }>;
+    if (!privateModelColumns.some((column) => column.name === "base_url")) {
+      this.db.exec("ALTER TABLE system_private_models ADD COLUMN base_url TEXT");
+    }
+  }
+
+  private loadCredentialKey(dataDir: string): Buffer {
+    const keyPath = path.join(dataDir, ".credential-key");
+    if (!existsSync(keyPath)) {
+      writeFileSync(keyPath, randomBytes(32), { mode: 0o600, flag: "wx" });
+      try { chmodSync(keyPath, 0o600); } catch { /* Windows permissions are managed by the user profile. */ }
+    }
+    const key = readFileSync(keyPath);
+    if (key.length !== 32) throw new Error("模型密钥加密主密钥无效");
+    return key;
+  }
+
+  private encryptApiKey(value: string): string {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", this.credentialKey, iv);
+    const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+    return ["v1", iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), encrypted.toString("base64url")].join(".");
+  }
+
+  private decryptApiKey(value: string): string {
+    const [version, iv, tag, encrypted] = value.split(".");
+    if (version !== "v1" || !iv || !tag || !encrypted) throw new Error("模型密钥密文格式无效");
+    const decipher = createDecipheriv("aes-256-gcm", this.credentialKey, Buffer.from(iv, "base64url"));
+    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
   }
 
   getDisplay(userId: number): DisplaySettings {
@@ -159,7 +220,7 @@ export class SettingsRepository {
 
   get(userId: number): DataSourceSettings {
     const row = this.db
-      .prepare("SELECT user_id, data_source, futu_host, futu_port, provider_chains, updated_at FROM user_settings WHERE user_id = ?")
+      .prepare("SELECT user_id, data_source, futu_host, futu_port, provider_chains, tushare_token_ciphertext, updated_at FROM user_settings WHERE user_id = ?")
       .get(userId) as SettingsRow | undefined;
     if (!row) {
       return this.defaultSettings();
@@ -169,6 +230,7 @@ export class SettingsRepository {
       futuHost: row.futu_host || "127.0.0.1",
       futuPort: Number(row.futu_port || 11111),
       providerChains: this.normalizeProviderChains(row.provider_chains),
+      hasTushareToken: Boolean(row.tushare_token_ciphertext),
       updatedAt: row.updated_at,
     };
   }
@@ -179,6 +241,9 @@ export class SettingsRepository {
     const futuHost = String(body.futuHost ?? current.futuHost).trim() || "127.0.0.1";
     const futuPort = Number(body.futuPort ?? current.futuPort);
     const providerChains = this.normalizeProviderChains(body.providerChains ?? current.providerChains);
+    const existing = this.db.prepare("SELECT tushare_token_ciphertext FROM user_settings WHERE user_id = ?").get(userId) as { tushare_token_ciphertext?: string } | undefined;
+    const submittedToken = String(body.tushareToken ?? "").trim();
+    const tushareTokenCiphertext = submittedToken ? this.encryptApiKey(submittedToken) : existing?.tushare_token_ciphertext ?? null;
 
     if (!["auto", "futu"].includes(dataSource)) {
       throw new BadRequestException("数据源必须是 auto 或 futu");
@@ -190,18 +255,24 @@ export class SettingsRepository {
     const updatedAt = new Date().toISOString();
     this.db
       .prepare(
-        `INSERT INTO user_settings (user_id, data_source, futu_host, futu_port, provider_chains, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO user_settings (user_id, data_source, futu_host, futu_port, provider_chains, tushare_token_ciphertext, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            data_source = excluded.data_source,
            futu_host = excluded.futu_host,
            futu_port = excluded.futu_port,
            provider_chains = excluded.provider_chains,
+           tushare_token_ciphertext = excluded.tushare_token_ciphertext,
            updated_at = excluded.updated_at`,
       )
-      .run(userId, dataSource, futuHost, futuPort, JSON.stringify(providerChains), updatedAt);
+      .run(userId, dataSource, futuHost, futuPort, JSON.stringify(providerChains), tushareTokenCiphertext, updatedAt);
 
-    return { dataSource, providerChains, futuHost, futuPort, updatedAt };
+    return { dataSource, providerChains, futuHost, futuPort, hasTushareToken: Boolean(tushareTokenCiphertext), updatedAt };
+  }
+
+  getTushareToken(userId: number): string {
+    const row = this.db.prepare("SELECT tushare_token_ciphertext FROM user_settings WHERE user_id = ?").get(userId) as { tushare_token_ciphertext?: string } | undefined;
+    return row?.tushare_token_ciphertext ? this.decryptApiKey(row.tushare_token_ciphertext) : "";
   }
 
   getModel(userId: number): ModelSettings {
@@ -276,7 +347,7 @@ export class SettingsRepository {
   listModels(userId: number): Array<ModelSettings & { isDefault: boolean }> {
     this.ensureModelPresets(userId);
     const rows = this.db.prepare(`SELECT * FROM user_models WHERE user_id = ? ORDER BY is_default DESC, id`).all(userId) as any[];
-    return rows.map((row) => ({ id: row.id, name: row.name, provider: this.normalizeModelProvider(row.provider), model: row.model, baseUrl: row.base_url, apiKeyRef: row.api_key_ref, temperature: Number(row.temperature), maxOutputTokens: Number(row.max_output_tokens), contextBudgetTokens: Number(row.context_budget_tokens), reasoningEffort: this.normalizeReasoningEffort(row.reasoning_effort), updatedAt: row.updated_at, isDefault: Boolean(row.is_default) }));
+    return rows.map((row) => ({ id: row.id, name: row.name, provider: this.normalizeModelProvider(row.provider), model: row.model, baseUrl: row.provider === "ollama" ? this.getSystemOllamaBaseUrl() : row.base_url, apiKeyRef: row.api_key_ref, hasApiKey: Boolean(row.api_key_ciphertext || (row.api_key_ref && process.env[row.api_key_ref])), temperature: Number(row.temperature), maxOutputTokens: Number(row.max_output_tokens), contextBudgetTokens: Number(row.context_budget_tokens), reasoningEffort: this.normalizeReasoningEffort(row.reasoning_effort), updatedAt: row.updated_at, isDefault: Boolean(row.is_default) }));
   }
 
   getModelById(userId: number, id?: number): ModelSettings & { isDefault?: boolean } {
@@ -284,6 +355,70 @@ export class SettingsRepository {
     const found = this.listModels(userId).find((item) => item.id === id);
     if (!found) throw new BadRequestException("模型配置不存在");
     return found;
+  }
+
+  privateModelStates() {
+    return this.db.prepare("SELECT model, base_url, enabled, updated_at FROM system_private_models").all() as Array<{ model: string; base_url: string | null; enabled: number; updated_at: string }>;
+  }
+
+  setPrivateModelEnabled(modelInput: string, enabled: boolean, updatedBy: number) {
+    const model = String(modelInput || "").trim();
+    if (!model) throw new BadRequestException("模型名称不能为空");
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`INSERT INTO system_private_models (model, enabled, updated_by, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(model) DO UPDATE SET enabled=excluded.enabled, updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
+      .run(model, enabled ? 1 : 0, updatedBy, updatedAt);
+    return { model, enabled, updatedAt };
+  }
+
+  setPrivateModelBaseUrl(modelInput: string, baseUrlInput: string, updatedBy: number) {
+    const model = String(modelInput || "").trim();
+    const baseUrl = this.normalizeOllamaBaseUrl(baseUrlInput);
+    if (!model) throw new BadRequestException("模型名称不能为空");
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`INSERT INTO system_private_models (model, base_url, enabled, updated_by, updated_at) VALUES (?, ?, 1, ?, ?)
+      ON CONFLICT(model) DO UPDATE SET base_url=excluded.base_url, updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
+      .run(model, baseUrl, updatedBy, updatedAt);
+    this.db.prepare("UPDATE user_models SET base_url = ? WHERE provider = 'ollama' AND model = ?").run(baseUrl, model);
+    return { model, baseUrl, updatedAt };
+  }
+
+  isPrivateModelEnabled(model: string) {
+    const row = this.db.prepare("SELECT enabled FROM system_private_models WHERE model = ?").get(model) as { enabled: number } | undefined;
+    return row ? Boolean(row.enabled) : true;
+  }
+
+  getSystemOllamaBaseUrl() {
+    const row = this.db.prepare("SELECT ollama_base_url FROM system_model_settings WHERE id = 1").get() as { ollama_base_url: string } | undefined;
+    return row?.ollama_base_url || "http://127.0.0.1:11434";
+  }
+
+  setSystemOllamaBaseUrl(baseUrlInput: string, updatedBy: number) {
+    const baseUrl = this.normalizeOllamaBaseUrl(baseUrlInput);
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`INSERT INTO system_model_settings (id, ollama_base_url, updated_by, updated_at) VALUES (1, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET ollama_base_url=excluded.ollama_base_url, updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
+      .run(baseUrl, updatedBy, updatedAt);
+    return { baseUrl, updatedAt };
+  }
+
+  private normalizeOllamaBaseUrl(value: string) {
+    const baseUrl = String(value || "").trim().replace(/\/$/, "");
+    let parsed: URL;
+    try { parsed = new URL(baseUrl); } catch { throw new BadRequestException("请输入有效的 Ollama HTTP 地址"); }
+    if (!["http:", "https:"].includes(parsed.protocol)) throw new BadRequestException("Ollama 地址仅支持 HTTP 或 HTTPS");
+    return baseUrl;
+  }
+
+  getModelApiKey(userId: number, id?: number): string {
+    if (id) {
+      const row = this.db.prepare("SELECT api_key_ciphertext, api_key_ref FROM user_models WHERE user_id = ? AND id = ?").get(userId, id) as { api_key_ciphertext?: string; api_key_ref?: string } | undefined;
+      if (!row) throw new BadRequestException("模型配置不存在");
+      if (row.api_key_ciphertext) return this.decryptApiKey(row.api_key_ciphertext);
+      return row.api_key_ref ? process.env[row.api_key_ref] ?? "" : "";
+    }
+    const selected = this.getModel(userId);
+    return selected.id ? this.getModelApiKey(userId, selected.id) : (selected.apiKeyRef ? process.env[selected.apiKeyRef] ?? "" : "");
   }
 
   saveModelEntry(userId: number, body: Partial<ModelSettings> & { isDefault?: boolean }) {
@@ -294,9 +429,12 @@ export class SettingsRepository {
     if (!name || !model) throw new BadRequestException("配置名称和模型名称不能为空");
     const now = new Date().toISOString();
     if (body.isDefault || !this.listModels(userId).length) this.db.prepare("UPDATE user_models SET is_default = 0 WHERE user_id = ?").run(userId);
-    const values = [name, provider, model, String(body.baseUrl || this.defaultBaseUrl(provider)).trim(), String(body.apiKeyRef ?? "").trim() || null, Number(body.temperature ?? fallback.temperature), Number(body.maxOutputTokens ?? fallback.maxOutputTokens), Number(body.contextBudgetTokens ?? fallback.contextBudgetTokens), this.normalizeReasoningEffort(body.reasoningEffort), body.isDefault || !this.listModels(userId).length ? 1 : 0, now];
-    if (body.id) this.db.prepare(`UPDATE user_models SET name=?,provider=?,model=?,base_url=?,api_key_ref=?,temperature=?,max_output_tokens=?,context_budget_tokens=?,reasoning_effort=?,is_default=?,updated_at=? WHERE user_id=? AND id=?`).run(...values, userId, body.id);
-    else this.db.prepare(`INSERT INTO user_models (name,provider,model,base_url,api_key_ref,temperature,max_output_tokens,context_budget_tokens,reasoning_effort,is_default,updated_at,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(...values, userId);
+    const existing = body.id ? this.db.prepare("SELECT api_key_ciphertext FROM user_models WHERE user_id=? AND id=?").get(userId, body.id) as { api_key_ciphertext?: string } | undefined : undefined;
+    const submittedApiKey = String(body.apiKey ?? "").trim();
+    const ciphertext = submittedApiKey ? this.encryptApiKey(submittedApiKey) : existing?.api_key_ciphertext ?? null;
+    const values = [name, provider, model, String(body.baseUrl || this.defaultBaseUrl(provider)).trim(), String(body.apiKeyRef ?? "").trim() || null, ciphertext, Number(body.temperature ?? fallback.temperature), Number(body.maxOutputTokens ?? fallback.maxOutputTokens), Number(body.contextBudgetTokens ?? fallback.contextBudgetTokens), this.normalizeReasoningEffort(body.reasoningEffort), body.isDefault || !this.listModels(userId).length ? 1 : 0, now];
+    if (body.id) this.db.prepare(`UPDATE user_models SET name=?,provider=?,model=?,base_url=?,api_key_ref=?,api_key_ciphertext=?,temperature=?,max_output_tokens=?,context_budget_tokens=?,reasoning_effort=?,is_default=?,updated_at=? WHERE user_id=? AND id=?`).run(...values, userId, body.id);
+    else this.db.prepare(`INSERT INTO user_models (name,provider,model,base_url,api_key_ref,api_key_ciphertext,temperature,max_output_tokens,context_budget_tokens,reasoning_effort,is_default,updated_at,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(...values, userId);
     const id = body.id || Number((this.db.prepare("SELECT last_insert_rowid() id").get() as any).id);
     return this.getModelById(userId, id);
   }
@@ -346,6 +484,7 @@ export class SettingsRepository {
       providerChains: this.normalizeProviderChains(null),
       futuHost: "127.0.0.1",
       futuPort: 11111,
+      hasTushareToken: false,
       updatedAt: null,
     };
   }
@@ -357,7 +496,7 @@ export class SettingsRepository {
     }
     const input = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
     const allowed: Record<string, string[]> = {
-      "A Share": ["akshare", "baostock", "futu", "yfinance"],
+      "A Share": ["akshare", "tushare", "baostock", "futu", "yfinance"],
       "Hong Kong": ["futu", "akshare", "yfinance"],
       US: ["sec_edgar", "futu", "yfinance", "akshare"],
     };

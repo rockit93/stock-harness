@@ -10,6 +10,7 @@ type UserRecord = {
   passwordHash: string;
   salt: string;
   createdAt: string;
+  role: "admin" | "user";
 };
 
 type UserRow = {
@@ -18,6 +19,7 @@ type UserRow = {
   password_hash: string;
   salt: string;
   created_at: string;
+  role: string;
 };
 
 @Injectable()
@@ -38,20 +40,24 @@ export class SqliteUserRepository {
         created_at TEXT NOT NULL
       );
     `);
+    const columns = this.db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "role")) this.db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+    this.db.prepare("UPDATE users SET role = 'admin' WHERE lower(username) = 'admin'").run();
   }
 
   findByUsername(username: string): UserRecord | null {
     const row = this.db
-      .prepare("SELECT id, username, password_hash, salt, created_at FROM users WHERE username = ?")
+      .prepare("SELECT id, username, password_hash, salt, created_at, role FROM users WHERE username = ?")
       .get(username) as UserRow | undefined;
     return row ? this.mapRow(row) : null;
   }
 
   create(username: string, passwordHash: string, salt: string): UserRecord {
     const createdAt = new Date().toISOString();
+    const role = username.toLowerCase() === "admin" ? "admin" : "user";
     const result = this.db
-      .prepare("INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)")
-      .run(username, passwordHash, salt, createdAt);
+      .prepare("INSERT INTO users (username, password_hash, salt, created_at, role) VALUES (?, ?, ?, ?, ?)")
+      .run(username, passwordHash, salt, createdAt, role);
 
     return {
       id: Number(result.lastInsertRowid),
@@ -59,6 +65,7 @@ export class SqliteUserRepository {
       passwordHash,
       salt,
       createdAt,
+      role,
     };
   }
 
@@ -69,6 +76,7 @@ export class SqliteUserRepository {
       passwordHash: row.password_hash,
       salt: row.salt,
       createdAt: row.created_at,
+      role: row.role === "admin" ? "admin" : "user",
     };
   }
 }

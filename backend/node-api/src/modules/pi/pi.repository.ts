@@ -425,13 +425,13 @@ export class PiRepository {
     ).run(
       "数据源",
       "按照用户当前配置的市场路由获取行情与基本面数据。",
-      "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。",
+      "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Tushare Pro、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。",
       new Date().toISOString(),
       "Futu 数据源",
     );
     const skills = [
       ["量化研究规范", "将投资想法拆成可验证、可回测、可解释的研究流程。", "# 量化研究规范\n\n先明确市场、标的、周期、入场、出场与风控规则；使用确定性数据与回测工具验证；清楚区分研究结论与投资建议。"],
-      ["数据源", "按照用户当前配置的市场路由获取行情与基本面数据。", "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。"],
+      ["数据源", "按照用户当前配置的市场路由获取行情与基本面数据。", "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Tushare Pro、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。"],
     ];
     const insert = this.db.prepare(
       `INSERT INTO pi_skills (user_id, name, description, content, source_type, created_at, updated_at, visibility, is_system)

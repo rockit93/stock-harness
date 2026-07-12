@@ -63,15 +63,17 @@ const metrics = [
 <style scoped>
 .results-panel { min-width: 0; }
 .result-metrics { display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.metric-card { border: 1px solid #e5e8ef; border-radius: 12px; box-shadow: 0 5px 18px rgba(29, 33, 41, .035); }
-.metric-card span { display: flex; align-items: center; gap: 5px; color: #86909c; font-size: 12px; }
-.metric-card strong { display: block; margin-top: 10px; color: #1d2129; font-size: 24px; font-weight: 650; }
+.metric-card { border: 1px solid var(--app-border); border-radius: 12px; background: var(--app-surface); box-shadow: 0 5px 18px var(--app-shadow); }
+.metric-card span { display: flex; align-items: center; gap: 5px; color: var(--app-text-muted); font-size: 12px; }
+.metric-card strong { display: block; margin-top: 10px; color: var(--app-text-strong); font-size: 24px; font-weight: 650; }
 .result-charts { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.chart-card, .empty-card { border: 1px solid #e5e8ef; border-radius: 14px; box-shadow: 0 8px 28px rgba(29, 33, 41, .04); }
+.chart-card, .empty-card { overflow: hidden; border: 1px solid var(--app-border); border-radius: 14px; background: var(--app-surface); box-shadow: 0 8px 28px var(--app-shadow); }
+.chart-card :deep(.arco-card-header) { border-color: var(--app-border); color: var(--app-text-strong); }
+.chart-card :deep(.arco-card-body) { background: var(--app-surface); }
 .empty-card { display: grid; min-height: 360px; place-items: center; }
 .empty-card :deep(.arco-card-body) { text-align: center; }
-.empty-card p { margin: 14px 0 0; color: #a0a7b4; font-size: 13px; }
-.empty-icon { display: grid; width: 68px; height: 68px; place-items: center; border-radius: 20px; background: linear-gradient(145deg, #edf3ff, #f4f0ff); color: #4b72f2; font-size: 30px; }
+.empty-card p { margin: 14px 0 0; color: var(--app-text-muted); font-size: 13px; }
+.empty-icon { display: grid; width: 68px; height: 68px; place-items: center; border-radius: 20px; background: var(--app-accent-bg); color: var(--app-accent-soft); font-size: 30px; }
 
 @media (max-width: 1100px) { .result-metrics { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 620px) { .result-metrics { grid-template-columns: 1fr; } }

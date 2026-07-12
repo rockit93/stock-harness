@@ -38,7 +38,7 @@ const sidebarCollapsed = ref(false);
 </template>
 
 <style scoped>
-.app-shell { height: 100vh; overflow: hidden; background: var(--app-bg); color: var(--app-text); transition: background .25s ease, color .25s ease; }
-.app-body { position: relative; display: flex; height: calc(100vh - 60px); min-width: 0; }
-.app-content { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+.app-shell { display: grid; grid-template-rows: 60px minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; background: var(--app-bg); color: var(--app-text); transition: background .25s ease, color .25s ease; }
+.app-body { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.app-content { flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 </style>

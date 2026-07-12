@@ -17,6 +17,26 @@ export class PiController {
     return this.runtime.listConversations(Number(req.user.sub));
   }
 
+  @Get("conversations/:id/status")
+  conversationStatus(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.runtime.conversationStatus(Number(req.user.sub), Number(id));
+  }
+
+  @Put("conversations/:id")
+  renameConversation(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: { title?: string }) {
+    return this.runtime.renameConversation(Number(req.user.sub), Number(id), body.title || "");
+  }
+
+  @Post("conversations/:id/archive")
+  archiveConversation(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.runtime.setConversationArchived(Number(req.user.sub), Number(id), true);
+  }
+
+  @Post("conversations/:id/restore")
+  restoreConversation(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.runtime.setConversationArchived(Number(req.user.sub), Number(id), false);
+  }
+
   @Get("projects")
   listProjects(@Req() req: AuthenticatedRequest) {
     return this.runtime.listProjects(Number(req.user.sub));

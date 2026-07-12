@@ -5,6 +5,7 @@ import { SqliteUserRepository } from "./sqlite-user.repository";
 export type JwtPayload = {
   sub: string;
   username: string;
+  role: "admin" | "user";
   iat: number;
   exp: number;
 };
@@ -31,9 +32,9 @@ export class AuthService {
     const { passwordHash, salt } = this.hashPassword(password);
     const user = this.users.create(username, passwordHash, salt);
     return {
-      token: this.signToken({ sub: String(user.id), username: user.username }, rememberMe),
+      token: this.signToken({ sub: String(user.id), username: user.username, role: user.role }, rememberMe),
       expiresIn: rememberMe ? this.rememberTokenTtlSeconds : this.sessionTokenTtlSeconds,
-      user: { id: user.id, username: user.username },
+      user: { id: user.id, username: user.username, role: user.role },
     };
   }
 
@@ -50,9 +51,9 @@ export class AuthService {
     }
 
     return {
-      token: this.signToken({ sub: String(user.id), username: user.username }, rememberMe),
+      token: this.signToken({ sub: String(user.id), username: user.username, role: user.role }, rememberMe),
       expiresIn: rememberMe ? this.rememberTokenTtlSeconds : this.sessionTokenTtlSeconds,
-      user: { id: user.id, username: user.username },
+      user: { id: user.id, username: user.username, role: user.role },
     };
   }
 
@@ -72,6 +73,7 @@ export class AuthService {
     if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) {
       throw new UnauthorizedException("token 已过期");
     }
+    payload.role = payload.role === "admin" || payload.username.toLowerCase() === "admin" ? "admin" : "user";
 
     return payload;
   }
@@ -88,7 +90,7 @@ export class AuthService {
     return { username, password };
   }
 
-  private signToken(payload: Pick<JwtPayload, "sub" | "username">, rememberMe: boolean) {
+  private signToken(payload: Pick<JwtPayload, "sub" | "username" | "role">, rememberMe: boolean) {
     const now = Math.floor(Date.now() / 1000);
     const fullPayload: JwtPayload = {
       ...payload,

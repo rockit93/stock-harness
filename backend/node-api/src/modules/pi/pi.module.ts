@@ -7,9 +7,10 @@ import { SettingsModule } from "../settings/settings.module";
 import { PiRuntimeRepository } from "./pi-runtime.repository";
 import { PiRuntimeService } from "./pi-runtime.service";
 import { ToolRegistryService } from "./tools/tool-registry.service";
+import { ModelMonitoringModule } from "../monitoring/model-monitoring.module";
 
 @Module({
-  imports: [AuthModule, SettingsModule],
+  imports: [AuthModule, SettingsModule, ModelMonitoringModule],
   controllers: [PiController],
   providers: [PiRepository, PiWorkspaceService, PiRuntimeRepository, PiRuntimeService, ToolRegistryService],
   exports: [PiRepository, PiWorkspaceService],

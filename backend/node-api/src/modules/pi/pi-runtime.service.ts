@@ -2,11 +2,12 @@ import { BadGatewayException, BadRequestException, Inject, Injectable } from "@n
 import { SettingsRepository } from "../settings/settings.repository";
 import { PiRuntimeRepository, RuntimeRole } from "./pi-runtime.repository";
 import { ToolRegistryService } from "./tools/tool-registry.service";
+import { ModelMonitoringRepository } from "../monitoring/model-monitoring.repository";
 
 const SYSTEM_DATA_SOURCE_SKILL = `
 ## system:data-source
 Pi has a built-in data-source skill for market data and quant research.
-- Always use the current user's configured market routing. A data-source provider (such as Futu, AkShare, Yahoo Finance, SEC EDGAR, or a custom HTTP source) is an implementation selected at runtime, not a separate user-facing skill.
+- Always use the current user's configured market routing. A data-source provider (such as Futu, AkShare, Tushare Pro, Yahoo Finance, SEC EDGAR, or a custom HTTP source) is an implementation selected at runtime, not a separate user-facing skill.
 - Prefer the local platform data tools when the user asks about quotes, K-line data, snapshots, market search, fundamentals, indicators, or subscriptions.
 - If the selected route contains Futu, connect through the configured Futu OpenD host and port. Do not assume Futu is selected merely because it is available.
 - Normalize symbols before analysis: HK.00700 for Hong Kong stocks, US.AAPL for US stocks, SH.600519/SZ.000001 for A shares, CC.BTCUSD for crypto pairs.
@@ -52,14 +53,24 @@ export type ChatBody = {
 
 @Injectable()
 export class PiRuntimeService {
+  private readonly activeConversations = new Set<string>();
+
   constructor(
     @Inject(PiRuntimeRepository) private readonly runtime: PiRuntimeRepository,
     @Inject(SettingsRepository) private readonly settings: SettingsRepository,
     @Inject(ToolRegistryService) private readonly tools: ToolRegistryService,
+    @Inject(ModelMonitoringRepository) private readonly monitoring: ModelMonitoringRepository,
   ) {}
 
   listConversations(userId: number) {
     return this.runtime.listConversations(userId);
+  }
+  renameConversation(userId: number, conversationId: number, title: string) { return this.runtime.renameConversation(userId, conversationId, title); }
+  setConversationArchived(userId: number, conversationId: number, archived: boolean) { return this.runtime.setConversationArchived(userId, conversationId, archived); }
+
+  conversationStatus(userId: number, conversationId: number) {
+    this.runtime.getConversation(userId, conversationId);
+    return { conversationId, running: this.activeConversations.has(`${userId}:${conversationId}`) };
   }
 
   listProjects(userId: number) { return this.runtime.listProjects(userId); }
@@ -109,6 +120,8 @@ export class PiRuntimeService {
       skills: ["system:data-source", ...context.skills.map((item) => item.name)],
       plugins: context.plugins.map((item) => item.name),
     });
+    const activeKey = `${userId}:${conversationId}`;
+    this.activeConversations.add(activeKey);
 
     const systemPrompt = this.buildSystemPrompt(context, roles, modelSettings.contextBudgetTokens, this.settings.get(userId));
     const history = this.runtime.listMessages(conversationId, 24);
@@ -144,7 +157,7 @@ export class PiRuntimeService {
     const toolTrace: Array<{ name: string; ok: boolean; durationMs: number }> = [];
     try {
       for (let round = 0; round < 6; round++) {
-        const turn = await this.runModelTurn(modelSettings, selectedModel, messages, allowedToolNames);
+        const turn = await this.runModelTurn(userId, conversationId, projectId, modelSettings, selectedModel, messages, allowedToolNames);
         assistantThinking += turn.thinking;
         if (turn.toolCalls.length) {
           messages.push(turn.assistantMessage);
@@ -183,24 +196,30 @@ export class PiRuntimeService {
     } catch (error) {
       if (assistant) this.runtime.addMessage(conversationId, "assistant", assistant, { roleId: route.role?.id ?? null, roleName: route.role?.name ?? "个人助手", thinking: assistantThinking });
       throw error;
+    } finally {
+      this.activeConversations.delete(activeKey);
     }
   }
 
-  private async runModelTurn(settings: ReturnType<SettingsRepository["getModel"]>, model: string, messages: any[], allowedToolNames: string[]) {
+  private async runModelTurn(userId: number, conversationId: number, projectId: number | null, settings: ReturnType<SettingsRepository["getModel"]>, model: string, messages: any[], allowedToolNames: string[]) {
+    const startedAt = Date.now();
     const modelTools = this.tools.listForModel(allowedToolNames);
     const toolOptions = modelTools.length ? { tools: modelTools, tool_choice: "auto" } : {};
     if (settings.provider === "ollama") {
+      if (!this.settings.isPrivateModelEnabled(model)) throw new BadRequestException(`系统私有模型 ${model} 已被管理员禁用`);
       const response = await this.callOllama(settings.baseUrl, { model, messages, ...(modelTools.length ? { tools: modelTools } : {}), stream: false, options: { temperature: settings.temperature, num_predict: settings.maxOutputTokens, num_ctx: settings.contextBudgetTokens } });
       const payload = await response.json() as any;
       if (payload.error) throw new Error(String(payload.error));
       const message = payload.message || {};
       const toolCalls = (message.tool_calls || []).map((call: any, index: number) => ({ id: `ollama-${index}`, name: String(call.function?.name || ""), arguments: JSON.stringify(call.function?.arguments || {}) }));
+      this.monitoring.record({ userId, conversationId, projectId, provider: settings.provider, model, promptTokens: Number(payload.prompt_eval_count || 0), completionTokens: Number(payload.eval_count || 0), durationMs: Date.now() - startedAt, success: true });
       return { content: String(message.content || ""), thinking: String(message.thinking || ""), toolCalls, assistantMessage: message };
     }
-    const response = await this.callOpenAi(settings, { model, messages, ...toolOptions, stream: false, temperature: settings.temperature, max_tokens: settings.maxOutputTokens });
+    const response = await this.callOpenAi(userId, settings, { model, messages, ...toolOptions, stream: false, temperature: settings.temperature, max_tokens: settings.maxOutputTokens });
     const payload = await response.json() as any;
     const message = payload.choices?.[0]?.message || {};
     const toolCalls = (message.tool_calls || []).map((call: any) => ({ id: String(call.id), name: String(call.function?.name || ""), arguments: String(call.function?.arguments || "{}") }));
+    this.monitoring.record({ userId, conversationId, projectId, provider: settings.provider, model, promptTokens: Number(payload.usage?.prompt_tokens || 0), completionTokens: Number(payload.usage?.completion_tokens || 0), durationMs: Date.now() - startedAt, success: true });
     return { content: String(message.content || ""), thinking: String(message.reasoning_content || message.reasoning || ""), toolCalls, assistantMessage: message };
   }
 
@@ -292,9 +311,9 @@ export class PiRuntimeService {
     }
   }
 
-  private async callOpenAi(settings: ReturnType<SettingsRepository["getModel"]>, body: unknown) {
-    const apiKey = settings.apiKeyRef ? process.env[settings.apiKeyRef] : "";
-    if (!apiKey) throw new BadRequestException(`未找到 API Key 环境变量：${settings.apiKeyRef || "未配置"}`);
+  private async callOpenAi(userId: number, settings: ReturnType<SettingsRepository["getModel"]>, body: unknown) {
+    const apiKey = this.settings.getModelApiKey(userId, settings.id);
+    if (!apiKey) throw new BadRequestException("请先在模型配置中填写 API Key");
     const response = await fetch(`${settings.baseUrl.replace(/\/$/, "")}/chat/completions`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) });
     if (!response.ok || !response.body) { const payload = await response.json().catch(() => ({})) as any; throw new BadGatewayException(payload.error?.message ?? `OpenAI 兼容接口返回 HTTP ${response.status}`); }
     return response;

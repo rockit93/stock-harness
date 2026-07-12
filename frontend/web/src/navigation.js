@@ -14,14 +14,14 @@ export const secondaryNavigation = {
     { key: "backtest-strategies", label: "回测策略", icon: "experiment" },
   ],
   assistant: [
-    { key: "pi-chat", label: "新对话", icon: "message" },
+    { key: "pi-chat", label: "新任务", icon: "message" },
     {
       key: "project-center",
       label: "项目管理",
       icon: "dashboard",
       children: [
         { key: "pi-projects", label: "项目列表" },
-        { key: "pi-tasks", label: "任务中心" },
+        { key: "pi-tasks", label: "定时任务" },
       ],
     },
     {
@@ -46,6 +46,7 @@ export const secondaryNavigation = {
     },
     { key: "data-sources", label: "数据源管理", icon: "dashboard" },
     { key: "models", label: "模型管理", icon: "robot" },
+    { key: "model-monitoring", label: "模型监控", icon: "dashboard" },
   ],
 };
 
