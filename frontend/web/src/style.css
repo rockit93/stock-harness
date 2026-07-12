@@ -1716,7 +1716,7 @@ header p {
 
 .codex-chat {
   display: grid;
-  grid-template-rows: minmax(360px, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 0;
   min-width: 0;
   height: 100%;

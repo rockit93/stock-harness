@@ -240,8 +240,8 @@ function addIndicator() {
   while (editor.definition.indicators[`indicator${index}`]) index += 1;
   editor.definition.indicators[`indicator${index}`] = { type: "sma", period: 20 };
 }
-function renameIndicator(oldName, event) {
-  const name = String(event?.target?.value || "").trim();
+function renameIndicator(oldName, value) {
+  const name = String(value || "").trim();
   if (!name || name === oldName || !/^[A-Za-z_]\w*$/.test(name) || editor.definition.indicators[name]) return;
   const entries = Object.entries(editor.definition.indicators).map(([key, value]) => [key === oldName ? name : key, value]);
   editor.definition.indicators = Object.fromEntries(entries);
@@ -537,7 +537,7 @@ onMounted(loadDatasets);
                 <header><div><b>1</b><span><strong>技术指标</strong><small>给指标命名，然后设置类型和周期</small></span></div><a-button size="small" :disabled="indicatorEntries.length >= 20" @click="addIndicator">添加指标</a-button></header>
                 <div class="indicator-list">
                   <div v-for="([name, spec]) in indicatorEntries" :key="name" class="indicator-row">
-                    <a-input :model-value="name" placeholder="指标名称" @blur="renameIndicator(name, $event)" />
+                    <a-input :model-value="name" placeholder="指标名称" @change="value => renameIndicator(name, value)" />
                     <a-select v-model="spec.type"><a-option v-for="item in indicatorTypes" :key="item.value" :value="item.value">{{ item.label }}</a-option></a-select>
                     <a-input-number v-model="spec.period" :min="2" :max="500" :precision="0"><template #suffix>周期</template></a-input-number>
                     <a-button type="text" status="danger" :disabled="indicatorEntries.length <= 1" @click="removeIndicator(name)">删除</a-button>
