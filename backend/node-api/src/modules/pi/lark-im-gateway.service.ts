@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { SettingsRepository } from "../settings/settings.repository";
 import { PiRuntimeService, PiStreamEvent } from "./pi-runtime.service";
@@ -8,10 +8,16 @@ type MessageEvent = {
   message?: { message_id?: string; chat_id?: string; chat_type?: string; message_type?: string; content?: string; mentions?: unknown[] };
 };
 
+type GatewayLogLevel = "info" | "warning" | "error";
+type GatewayLogEntry = { id: number; timestamp: string; level: GatewayLogLevel; event: string; message: string };
+type GatewayConnection = { ws: Lark.WSClient; startedAt: string; lastHeartbeatAt: string | null; logs: GatewayLogEntry[] };
+
 @Injectable()
-export class LarkImGatewayService implements OnModuleInit {
+export class LarkImGatewayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LarkImGatewayService.name);
   private readonly seen = new Map<string, number>();
+  private readonly connections = new Map<number, GatewayConnection>();
+  private logSequence = 0;
 
   constructor(
     @Inject(SettingsRepository) private readonly settings: SettingsRepository,
@@ -20,6 +26,46 @@ export class LarkImGatewayService implements OnModuleInit {
 
   onModuleInit() {
     for (const connector of this.settings.listEnabledImConnectors()) this.start(connector.userId, connector.config, connector.appSecret);
+  }
+
+  onModuleDestroy() {
+    for (const connection of this.connections.values()) connection.ws.close({ force: true });
+    this.connections.clear();
+  }
+
+  restart(userId: number) {
+    this.connections.get(userId)?.ws.close({ force: true });
+    this.connections.delete(userId);
+    const config = this.settings.getImConnector(userId);
+    if (!config.enabled || !config.hasAppSecret || !config.appId) return this.getStatus(userId);
+    this.start(userId, config, this.settings.getImConnectorSecret(userId));
+    return this.getStatus(userId);
+  }
+
+  getStatus(userId: number) {
+    const connection = this.connections.get(userId);
+    if (!connection) return { state: "idle", connected: false, heartbeat: { enabled: false, intervalSeconds: 120, timeoutSeconds: 15, lastAt: null }, reconnectAttempts: 0 };
+    const status = connection.ws.getConnectionStatus();
+    if (status.state === "connected") connection.lastHeartbeatAt = new Date().toISOString();
+    return { ...status, connected: status.state === "connected", startedAt: connection.startedAt, heartbeat: { enabled: true, intervalSeconds: 120, timeoutSeconds: 15, lastAt: connection.lastHeartbeatAt } };
+  }
+
+  getLogs(userId: number, limit = 100) {
+    const logs = this.connections.get(userId)?.logs || [];
+    return logs.slice(-Math.max(1, Math.min(200, limit))).reverse();
+  }
+
+  clearLogs(userId: number) {
+    const connection = this.connections.get(userId);
+    if (connection) connection.logs.length = 0;
+    return { ok: true };
+  }
+
+  private addLog(userId: number, level: GatewayLogLevel, event: string, message: string) {
+    const connection = this.connections.get(userId);
+    if (!connection) return;
+    connection.logs.push({ id: ++this.logSequence, timestamp: new Date().toISOString(), level, event, message });
+    if (connection.logs.length > 200) connection.logs.splice(0, connection.logs.length - 200);
   }
 
   private start(userId: number, config: ReturnType<SettingsRepository["getImConnector"]>, appSecret: string) {
@@ -31,13 +77,30 @@ export class LarkImGatewayService implements OnModuleInit {
         void this.handleMessage(userId, client, data).catch((error) => this.logger.error(`飞书消息处理失败: ${error instanceof Error ? error.stack : String(error)}`));
       },
     });
-    const ws = new Lark.WSClient({ ...base, loggerLevel: Lark.LoggerLevel.info });
-    void ws.start({ eventDispatcher: dispatcher }).then(() => this.logger.log(`飞书长连接已启动 user=${userId}`)).catch((error) => this.logger.error(`飞书长连接启动失败 user=${userId}: ${error instanceof Error ? error.stack : String(error)}`));
+    const ws = new Lark.WSClient({
+      ...base,
+      loggerLevel: Lark.LoggerLevel.info,
+      autoReconnect: true,
+      handshakeTimeoutMs: 15_000,
+      wsConfig: { pingTimeout: 15 },
+      onReady: () => this.addLog(userId, "info", "connected", "WebSocket 连接已建立，心跳监测已启动"),
+      onReconnecting: () => this.addLog(userId, "warning", "reconnecting", "连接中断，正在自动重连"),
+      onReconnected: () => this.addLog(userId, "info", "reconnected", "WebSocket 已重新连接"),
+      onError: (error) => this.addLog(userId, "error", "connection_error", error.message),
+    });
+    this.connections.set(userId, { ws, startedAt: new Date().toISOString(), lastHeartbeatAt: null, logs: [] });
+    this.addLog(userId, "info", "starting", `正在连接${config.brand === "lark" ? " Lark" : "飞书"}长连接`);
+    void ws.start({ eventDispatcher: dispatcher }).then(() => this.addLog(userId, "info", "started", "WebSocket 客户端启动完成")).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.addLog(userId, "error", "start_failed", message);
+      this.logger.error(`Lark WebSocket start failed user=${userId}: ${message}`);
+    });
   }
 
   private async handleMessage(userId: number, client: Lark.Client, event: MessageEvent) {
     const message = event.message; const messageId = String(message?.message_id || ""); const chatId = String(message?.chat_id || "");
     if (!messageId || !chatId || message?.message_type !== "text" || event.sender?.sender_type === "app") return;
+    this.addLog(userId, "info", "message_received", `收到文本消息 message=${messageId} chat=${chatId}`);
     if (message.chat_type !== "p2p" && !(message.mentions?.length)) return;
     const now = Date.now();
     for (const [key, timestamp] of this.seen) if (now - timestamp > 24 * 60 * 60 * 1000) this.seen.delete(key);

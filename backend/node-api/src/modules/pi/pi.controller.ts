@@ -3,6 +3,7 @@ import type { FastifyReply } from "fastify";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
 import { PiRepository } from "./pi.repository";
 import { ChatBody, PiRuntimeService, PiStreamEvent } from "./pi-runtime.service";
+import { LarkImGatewayService } from "./lark-im-gateway.service";
 
 @UseGuards(AuthGuard)
 @Controller("pi")
@@ -10,7 +11,20 @@ export class PiController {
   constructor(
     @Inject(PiRepository) private readonly pi: PiRepository,
     @Inject(PiRuntimeService) private readonly runtime: PiRuntimeService,
+    @Inject(LarkImGatewayService) private readonly larkGateway: LarkImGatewayService,
   ) {}
+
+  @Get("im/feishu/status")
+  imGatewayStatus(@Req() req: AuthenticatedRequest) { return this.larkGateway.getStatus(Number(req.user.sub)); }
+
+  @Get("im/feishu/logs")
+  imGatewayLogs(@Req() req: AuthenticatedRequest) { return { logs: this.larkGateway.getLogs(Number(req.user.sub)) }; }
+
+  @Post("im/feishu/restart")
+  restartImGateway(@Req() req: AuthenticatedRequest) { return this.larkGateway.restart(Number(req.user.sub)); }
+
+  @Delete("im/feishu/logs")
+  clearImGatewayLogs(@Req() req: AuthenticatedRequest) { return this.larkGateway.clearLogs(Number(req.user.sub)); }
 
   @Get("conversations")
   listConversations(@Req() req: AuthenticatedRequest) {

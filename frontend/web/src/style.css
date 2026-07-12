@@ -2198,8 +2198,32 @@ button.starter-card small { color: #788496; font-size: 12px; line-height: 1.5; }
 .connector-logo { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; color: var(--app-accent); background: var(--app-accent-bg); font-weight: 800; font-size: 20px; }
 .permission-copy { margin-left: 10px; font-size: 13px; }
 .connector-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+.connector-oauth-status { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; border: 1px solid var(--app-border); border-radius: 9px; padding: 11px 13px; background: var(--app-surface-soft); }
+.connector-oauth-status > div { display: grid; gap: 3px; }
+.connector-oauth-status strong { color: var(--app-text-strong); font-size: 12px; }
+.connector-oauth-status span { color: var(--app-text-muted); font-size: 11px; }
 .connector-actions code { color: var(--app-text-strong); background: var(--app-surface-soft); border: 1px solid var(--app-border); border-radius: 5px; padding: 2px 5px; }
 .connector-capabilities .arco-tag { margin: 0 8px 8px 0; }
+.im-runtime-grid { display: grid; grid-template-columns: minmax(320px, .75fr) minmax(0, 1.25fr); gap: 16px; }
+.im-heartbeat-card, .im-log-card { background: var(--app-surface); border-color: var(--app-border); box-shadow: 0 8px 28px var(--app-shadow); }
+.im-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; }
+.runtime-status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--app-text-muted); box-shadow: 0 0 0 4px var(--app-surface-soft); }
+.runtime-status-dot.connected { background: var(--app-success, #22c55e); }
+.runtime-status-dot.connecting, .runtime-status-dot.reconnecting { background: var(--app-warning, #f59e0b); }
+.runtime-status-dot.failed { background: var(--app-danger, #ef4444); }
+.heartbeat-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.heartbeat-summary > div { display: grid; gap: 5px; border: 1px solid var(--app-border); border-radius: 9px; padding: 11px; background: var(--app-surface-soft); }
+.heartbeat-summary small, .heartbeat-last { color: var(--app-text-muted); }
+.heartbeat-summary strong { color: var(--app-text-strong); font-size: 15px; }
+.heartbeat-last { margin: 14px 0; font-size: 12px; }
+.im-log-list { max-height: 280px; overflow: auto; }
+.im-log-row { display: grid; grid-template-columns: 72px 120px minmax(0, 1fr); gap: 10px; align-items: baseline; border-bottom: 1px solid var(--app-border); padding: 9px 3px; font-size: 12px; }
+.im-log-row:last-child { border-bottom: 0; }
+.im-log-row time { color: var(--app-text-muted); font-variant-numeric: tabular-nums; }
+.im-log-row span { color: var(--app-accent); font-weight: 650; }
+.im-log-row.warning span { color: var(--app-warning, #f59e0b); }
+.im-log-row.error span { color: var(--app-danger, #ef4444); }
+.im-log-row p { margin: 0; color: var(--app-text-secondary); overflow-wrap: anywhere; }
 .monitoring-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .monitoring-kpis .arco-card { background: var(--app-surface); border-color: var(--app-border); box-shadow: 0 8px 28px var(--app-shadow); }
 .monitoring-kpis .arco-card-body { display: grid; gap: 7px; }
@@ -2234,6 +2258,7 @@ button.starter-card small { color: #788496; font-size: 12px; line-height: 1.5; }
 
 @media (max-width: 980px) {
   .connector-layout { grid-template-columns: 1fr; }
+  .im-runtime-grid { grid-template-columns: 1fr; }
   .monitoring-kpis { grid-template-columns: repeat(2, 1fr); }
   .monitoring-grid { grid-template-columns: 1fr; }
   .auth-screen { grid-template-columns: 1fr; gap: 42px; padding: 42px max(24px, 8vw); }
@@ -2289,6 +2314,8 @@ button.starter-card small { color: #788496; font-size: 12px; line-height: 1.5; }
 
 @media (max-width: 700px) {
   .connector-actions { align-items: stretch; flex-direction: column; }
+  .im-log-row { grid-template-columns: 65px minmax(0, 1fr); }
+  .im-log-row p { grid-column: 1 / -1; }
   .monitoring-kpis { grid-template-columns: 1fr; }
   .model-monitoring-page .panel-head .arco-space { margin-top: 14px; flex-wrap: wrap; }
   .token-trend { overflow-x: auto; }

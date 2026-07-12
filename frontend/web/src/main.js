@@ -254,6 +254,10 @@ const app = createApp({
       imConnectorStatus: null,
       imConnectorTesting: false,
       imConnectorAuthorizing: false,
+      imGatewayStatus: null,
+      imGatewayLogs: [],
+      imGatewayTimer: null,
+      imGatewayRefreshing: false,
       httpDataSources: [],
       dataSourceDrawerOpen: false,
       dataSourceRoutingOpen: false,
@@ -607,6 +611,7 @@ const app = createApp({
     if (this.currentPriceTimer) clearInterval(this.currentPriceTimer);
     if (this.chatRecoveryTimer) clearTimeout(this.chatRecoveryTimer);
     if (this.chatProgressTimer) clearInterval(this.chatProgressTimer);
+    if (this.imGatewayTimer) clearInterval(this.imGatewayTimer);
     disposeDashboardCharts();
   },
   methods: {
@@ -711,6 +716,7 @@ const app = createApp({
       this.activeModule = moduleName;
       this.error = "";
       this.settingsMessage = "";
+      if (moduleName !== "im-connectors" && this.imGatewayTimer) { clearInterval(this.imGatewayTimer); this.imGatewayTimer = null; }
       if (moduleName === "dashboard") {
         await nextTick();
         this.renderDashboardCharts();
@@ -727,13 +733,18 @@ const app = createApp({
     async loadImConnector() {
       this.imConnector = { ...this.imConnector, ...(await this.api("/settings/im-connectors/feishu")), appSecret: "" };
       await this.testImConnector();
+      await this.refreshImGateway();
+      if (this.imGatewayTimer) clearInterval(this.imGatewayTimer);
+      this.imGatewayTimer = setInterval(() => { if (this.activeModule === "im-connectors") void this.refreshImGateway(); }, 5000);
     },
     async saveImConnector() {
       this.settingsSaving = true; this.error = ""; this.settingsMessage = "";
       try {
         this.imConnector = { ...this.imConnector, ...(await this.api("/settings/im-connectors/feishu", { method: "PUT", body: JSON.stringify(this.imConnector) })), appSecret: "" };
+        await this.api("/pi/im/feishu/restart", { method: "POST" });
         this.settingsMessage = "飞书连接器配置已安全保存。";
         await this.testImConnector();
+        await this.refreshImGateway();
       } catch (error) { this.error = error instanceof Error ? error.message : String(error); }
       finally { this.settingsSaving = false; }
     },
@@ -753,6 +764,28 @@ const app = createApp({
         this.settingsMessage = "授权页面已打开；完成授权后请点击“检查连接”。";
       } catch (error) { popup?.close(); this.error = error instanceof Error ? error.message : String(error); }
       finally { this.imConnectorAuthorizing = false; }
+    },
+    async refreshImGateway() {
+      if (this.imGatewayRefreshing) return;
+      this.imGatewayRefreshing = true;
+      try {
+        const [status, logResult] = await Promise.all([this.api("/pi/im/feishu/status"), this.api("/pi/im/feishu/logs")]);
+        this.imGatewayStatus = status;
+        this.imGatewayLogs = logResult.logs || [];
+      } catch (error) {
+        this.imGatewayStatus = { state: "failed", connected: false, message: error instanceof Error ? error.message : String(error) };
+      } finally { this.imGatewayRefreshing = false; }
+    },
+    async restartImGateway() {
+      await this.api("/pi/im/feishu/restart", { method: "POST" });
+      await this.refreshImGateway();
+    },
+    async clearImGatewayLogs() {
+      await this.api("/pi/im/feishu/logs", { method: "DELETE" });
+      this.imGatewayLogs = [];
+    },
+    imGatewayStateLabel(state) {
+      return { idle: "未启动", connecting: "连接中", connected: "已连接", reconnecting: "重连中", failed: "连接失败" }[state] || "未知";
     },
     marketColorStyle(market) {
       const redUp = this.displaySettings.marketColors[market] !== "green-up";
@@ -3277,10 +3310,31 @@ const app = createApp({
                 <a-form-item label="App Secret" :extra="imConnector.hasAppSecret ? '凭据已加密保存；留空表示继续使用现有 Secret。' : '凭据将加密保存在本机，保存后不再回显。'"><a-input-password v-model="imConnector.appSecret" placeholder="请输入飞书应用 App Secret" allow-clear /></a-form-item>
                 <a-form-item label="Agent 权限"><a-switch v-model="imConnector.allowWrite" /><span class="permission-copy">允许 AI 助手发送消息及修改飞书内容；关闭时仅允许读取。</span></a-form-item>
               </a-form>
-              <a-alert :type="imConnectorStatus?.ok ? 'success' : 'warning'" :show-icon="true"><template #title>{{ imConnectorStatus?.ok ? '连接正常' : '尚未完成授权' }}</template>{{ imConnectorStatus?.message || '保存应用凭据后检查认证状态。' }}</a-alert>
-              <div class="connector-actions"><a-button type="primary" :disabled="!imConnector.enabled || !imConnector.hasAppSecret" :loading="imConnectorAuthorizing" @click="authorizeImConnector">开始飞书授权</a-button><a-button :loading="imConnectorTesting" @click="testImConnector">检查连接</a-button><span class="hint dark">系统会自动使用当前 AlphaDock 账号，无需填写用户 ID。<template v-if="imConnectorStatus?.profile">连接身份：{{ imConnectorStatus.profile }}</template></span></div>
+              <a-alert :type="imGatewayStatus?.connected ? 'success' : (imConnector.enabled ? 'warning' : 'info')" :show-icon="true"><template #title>{{ imGatewayStatus?.connected ? 'IM 长连接正常' : (imConnector.enabled ? 'IM 长连接尚未建立' : '连接器未启用') }}</template>{{ imGatewayStatus?.connected ? '飞书事件 WebSocket 已连接，机器人可接收消息。' : '保存配置并启用连接器后，系统将建立飞书事件 WebSocket。' }}</a-alert>
+              <div class="connector-oauth-status"><div><strong>扩展能力授权（可选）</strong><span>仅文档、日历、任务等以用户身份访问的能力需要 OAuth；IM 机器人长连接不需要。</span></div><a-tag :color="imConnectorStatus?.authenticated ? 'green' : 'gray'">{{ imConnectorStatus?.authenticated ? '已授权' : '未授权' }}</a-tag></div>
+              <div class="connector-actions"><a-button :disabled="!imConnector.enabled || !imConnector.hasAppSecret" :loading="imConnectorAuthorizing" @click="authorizeImConnector">授权扩展能力</a-button><a-button :loading="imConnectorTesting" @click="testImConnector">检查授权状态</a-button><span class="hint dark"><template v-if="imConnectorStatus?.profile">授权身份：{{ imConnectorStatus.profile }}</template></span></div>
             </a-card>
             <a-card title="Agent 系统能力" class="connector-capabilities"><a-tag color="arcoblue">lark-im</a-tag><a-tag>lark-doc</a-tag><a-tag>lark-calendar</a-tag><a-tag>lark-task</a-tag><a-tag>lark-sheets</a-tag><a-tag>lark-wiki</a-tag><p>pi-agent 已接入官方 lark-cli 系统 skill。模型会优先发现命令参数，并遵守只读/写入权限与高风险操作确认规则。</p></a-card>
+          </div>
+          <div class="im-runtime-grid">
+            <a-card class="im-heartbeat-card">
+              <template #title><div class="im-card-heading"><span>WebSocket 心跳</span><i class="runtime-status-dot" :class="imGatewayStatus?.state"></i></div></template>
+              <div class="heartbeat-summary">
+                <div><small>连接状态</small><strong>{{ imGatewayStateLabel(imGatewayStatus?.state) }}</strong></div>
+                <div><small>心跳间隔</small><strong>{{ imGatewayStatus?.heartbeat?.intervalSeconds || 120 }} 秒</strong></div>
+                <div><small>失活超时</small><strong>{{ imGatewayStatus?.heartbeat?.timeoutSeconds || 15 }} 秒</strong></div>
+                <div><small>重连次数</small><strong>{{ imGatewayStatus?.reconnectAttempts || 0 }}</strong></div>
+              </div>
+              <p class="heartbeat-last">最近存活确认：{{ imGatewayStatus?.heartbeat?.lastAt ? new Date(imGatewayStatus.heartbeat.lastAt).toLocaleString('zh-CN') : '暂无' }}</p>
+              <a-button :loading="imGatewayRefreshing" :disabled="!imConnector.enabled" @click="restartImGateway">重启连接</a-button>
+            </a-card>
+            <a-card class="im-log-card">
+              <template #title><div class="im-card-heading"><span>连接日志</span><a-button type="text" size="mini" :disabled="!imGatewayLogs.length" @click="clearImGatewayLogs">清空</a-button></div></template>
+              <div class="im-log-list">
+                <div v-for="entry in imGatewayLogs" :key="entry.id" class="im-log-row" :class="entry.level"><time>{{ new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour12: false }) }}</time><span>{{ entry.event }}</span><p>{{ entry.message }}</p></div>
+                <a-empty v-if="!imGatewayLogs.length" description="暂无连接日志" />
+              </div>
+            </a-card>
           </div>
           <a-alert v-if="settingsMessage" type="success">{{ settingsMessage }}</a-alert>
         </section>
