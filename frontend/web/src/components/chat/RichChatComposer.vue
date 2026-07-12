@@ -13,6 +13,7 @@ const props = defineProps({
   placeholder: { type: String, default: "输入 @ 指定角色、# 选择股票、/ 调用能力…" },
   roles: { type: Array, default: () => [] },
   subscriptions: { type: Array, default: () => [] },
+  searchStocks: { type: Function, default: null },
   skills: { type: Array, default: () => [] },
   plugins: { type: Array, default: () => [] },
   starters: { type: Array, default: () => [] },
@@ -26,12 +27,16 @@ const emit = defineEmits(["update:modelValue", "update:document", "update:attach
 const command = ref(null);
 const activeIndex = ref(0);
 const dragActive = ref(false);
+const stockSearchResults = ref([]);
+const stockSearchLoading = ref(false);
 let dragDepth = 0;
 let externalUpdate = false;
+let stockSearchTimer = 0;
+let stockSearchSequence = 0;
 
 const commandMeta = {
   "@": { title: "指定角色", empty: "暂无可用角色" },
-  "#": { title: "选择订阅股票", empty: "暂无订阅股票" },
+  "#": { title: "选择股票", empty: "没有找到匹配股票" },
   "/": { title: "调用能力", empty: "暂无可用技能或插件" },
 };
 
@@ -42,7 +47,8 @@ const suggestions = computed(() => {
   if (command.value.trigger === "@") {
     values = props.roles.map((role) => ({ type: "role", id: role.id, label: role.name, description: role.responsibility || "指定本轮对话角色", icon: "@" }));
   } else if (command.value.trigger === "#") {
-    values = props.subscriptions.map((stock) => ({ type: "stock", id: stock.id, label: stock.symbol, description: stock.stockName || stock.market || "订阅股票", stock, icon: "#" }));
+    const stocks = command.value.query ? stockSearchResults.value : props.subscriptions;
+    values = stocks.map((stock) => ({ type: "stock", id: `${stock.market}-${stock.id ?? stock.symbol}`, label: stock.symbol, description: stock.stockName || stock.name || stock.market || "股票", stock, icon: "#" }));
   } else {
     values = [
       ...props.starters.map((item) => ({ type: "starter", id: `starter-${item.title}`, label: item.title, description: item.prompt, prompt: item.prompt, icon: item.icon || "↗", group: "常用任务" })),
@@ -51,6 +57,27 @@ const suggestions = computed(() => {
     ];
   }
   return values.filter((item) => `${item.label} ${item.description}`.toLowerCase().includes(query)).slice(0, 10);
+});
+
+watch(() => command.value?.trigger === "#" ? command.value.query.trim() : "", (query) => {
+  window.clearTimeout(stockSearchTimer);
+  if (!query || !props.searchStocks) {
+    stockSearchResults.value = [];
+    stockSearchLoading.value = false;
+    return;
+  }
+  const sequence = ++stockSearchSequence;
+  stockSearchLoading.value = true;
+  stockSearchTimer = window.setTimeout(async () => {
+    try {
+      const results = await props.searchStocks(query);
+      if (sequence === stockSearchSequence) stockSearchResults.value = Array.isArray(results) ? results : [];
+    } catch {
+      if (sequence === stockSearchSequence) stockSearchResults.value = [];
+    } finally {
+      if (sequence === stockSearchSequence) stockSearchLoading.value = false;
+    }
+  }, 220);
 });
 
 function refreshCommand(current) {
@@ -117,7 +144,8 @@ function selectSuggestion(item) {
     emit("select-role", item.id);
   } else if (item.type === "stock") {
     const market = { "A Share": "a-share", "Hong Kong": "hk", US: "us" }[item.stock.market] || "a-share";
-    const label = `#${item.stock.symbol}${item.stock.stockName ? `(${item.stock.stockName})` : ""}`;
+    const stockName = item.stock.stockName || item.stock.name || "";
+    const label = `#${item.stock.symbol}${stockName ? `(${stockName})` : ""}`;
     chain.insertContent(`[${label}](/stock/${market}/${encodeURIComponent(item.stock.symbol)}) `).run();
   } else if (item.type === "starter") {
     chain.insertContent(`${item.prompt} `).run();
@@ -138,7 +166,7 @@ watch(() => props.modelValue, (value) => {
 
 function clear() { editor.value?.commands.clearContent(true); command.value = null; }
 defineExpose({ clear, focus: () => editor.value?.commands.focus() });
-onBeforeUnmount(() => editor.value?.destroy());
+onBeforeUnmount(() => { window.clearTimeout(stockSearchTimer); editor.value?.destroy(); });
 
 function formatSize(size) {
   if (size < 1024) return `${size} B`;
@@ -244,7 +272,7 @@ function removeAttachment(id) {
     <EditorContent :editor="editor" />
     <div v-if="command" class="composer-command-menu">
       <div class="command-menu-head">
-        <strong>{{ commandMeta[command.trigger].title }}</strong>
+        <strong>{{ commandMeta[command.trigger].title }}<template v-if="command.query"> · <em>{{ command.trigger }}{{ command.query }}</em></template></strong>
         <span>↑↓ 选择 · Enter 确认 · Esc 关闭</span>
       </div>
       <div v-if="suggestions.length" class="command-menu-list">
@@ -253,7 +281,7 @@ function removeAttachment(id) {
           <span><strong>{{ item.label }}</strong><small>{{ item.group ? `${item.group} · ` : "" }}{{ item.description }}</small></span>
         </button>
       </div>
-      <div v-else class="command-empty">{{ commandMeta[command.trigger].empty }}</div>
+      <div v-else class="command-empty">{{ command.trigger === '#' && stockSearchLoading ? `正在搜索“${command.query}”…` : (command.trigger === '#' && command.query ? `没有找到“${command.query}”` : commandMeta[command.trigger].empty) }}</div>
     </div>
     <div class="rich-editor-status">
       <label v-if="showAttachments" class="attachment-picker" :class="{ disabled: !supportsFiles && !supportsImages }" :title="supportsImages ? '添加图片或文本文件' : '当前模型仅支持文本文件'">

@@ -168,7 +168,7 @@ export class PiRuntimeService {
     let assistant = "";
     let assistantThinking = "";
     let completed = false;
-    const toolTrace: Array<{ name: string; ok: boolean; durationMs: number }> = [];
+    const toolTrace: Array<{ name: string; arguments: unknown; ok: boolean; output?: unknown; error?: { code: string; message: string }; durationMs: number }> = [];
     try {
       for (let round = 0; round < 6; round++) {
         const turn = await this.runModelTurn(userId, conversationId, projectId, modelSettings, selectedModel, messages, allowedToolNames);
@@ -179,7 +179,16 @@ export class PiRuntimeService {
             const result = allowedToolNames.includes(call.name)
               ? await this.tools.execute(call.name, call.arguments, { userId, conversationId })
               : { ok: false, error: { code: "TOOL_FORBIDDEN", message: `Tool is not enabled: ${call.name}` }, metadata: { durationMs: 0 } };
-            toolTrace.push({ name: call.name, ok: result.ok, durationMs: result.metadata.durationMs });
+            let parsedArguments: unknown = call.arguments;
+            try { parsedArguments = JSON.parse(call.arguments || "{}"); } catch { /* Keep malformed model output visible for diagnosis. */ }
+            toolTrace.push({
+              name: call.name,
+              arguments: parsedArguments,
+              ok: result.ok,
+              ...(result.output !== undefined ? { output: result.output } : {}),
+              ...(result.error ? { error: result.error } : {}),
+              durationMs: result.metadata.durationMs,
+            });
             messages.push(modelSettings.provider === "ollama"
               ? { role: "tool", content: JSON.stringify(result), tool_name: call.name }
               : { role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });

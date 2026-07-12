@@ -389,6 +389,8 @@ const app = createApp({
       draggedSubscriptionId: null,
       draggedOverSubscriptionId: null,
       dashboardViewMode: localStorage.getItem("stock-harness-dashboard-view") || "cards",
+      dashboardRefreshMinutes: Number(localStorage.getItem("stock-harness-dashboard-refresh-minutes") || 0),
+      dashboardRefreshTimer: null,
       subscriptionDrawerOpen: false,
       subscriptionBatchLoading: false,
       dashboardColumns: Number(localStorage.getItem("stock-harness-dashboard-columns") || 4),
@@ -455,7 +457,8 @@ const app = createApp({
     routedStock() {
       const symbol = String(this.$route.params.symbol || "").toUpperCase();
       const market = this.marketFromRouteSegment(this.$route.params.market);
-      return this.subscriptions.find((item) => item.market === market && String(item.symbol || "").toUpperCase() === symbol) ?? null;
+      return this.subscriptions.find((item) => item.market === market && String(item.symbol || "").toUpperCase() === symbol)
+        ?? { market, symbol, stockName: "", temporary: true };
     },
     allDataSources() {
       const builtins = [
@@ -609,6 +612,7 @@ const app = createApp({
   },
   beforeUnmount() {
     if (this.currentPriceTimer) clearInterval(this.currentPriceTimer);
+    if (this.dashboardRefreshTimer) clearInterval(this.dashboardRefreshTimer);
     if (this.chatRecoveryTimer) clearTimeout(this.chatRecoveryTimer);
     if (this.chatProgressTimer) clearInterval(this.chatProgressTimer);
     if (this.imGatewayTimer) clearInterval(this.imGatewayTimer);
@@ -646,6 +650,7 @@ const app = createApp({
       if (this.$route.meta.module === "pi-chat") this.restoreChatRoute();
       await this.refreshCurrentPrices(true);
       this.currentPriceTimer = setInterval(() => void this.refreshCurrentPrices(false), 60_000);
+      this.restartDashboardRefreshTimer();
     },
     async api(path, options = {}) {
       const headers = {
@@ -687,6 +692,8 @@ const app = createApp({
       this.currentUser = payload.user;
     },
     logout() {
+      if (this.dashboardRefreshTimer) clearInterval(this.dashboardRefreshTimer);
+      this.dashboardRefreshTimer = null;
       this.token = "";
       this.currentUser = null;
       this.strategies = [];
@@ -721,6 +728,7 @@ const app = createApp({
         await nextTick();
         this.renderDashboardCharts();
       }
+      this.restartDashboardRefreshTimer();
       if (moduleName === "model-monitoring" && this.token) await this.loadModelMonitoring();
       if (moduleName === "im-connectors" && this.token) await this.loadImConnector();
     },
@@ -1248,6 +1256,15 @@ const app = createApp({
       const payload = await this.api("/symbols/lookup", { method: "POST", body: JSON.stringify({ market, keyword, limit: 12 }) });
       return payload.symbols ?? [];
     },
+    async searchChatStocks(keyword) {
+      const settled = await Promise.allSettled(
+        ["A Share", "Hong Kong", "US"].map((market) => this.searchSubscriptionSymbols(market, keyword)),
+      );
+      return settled
+        .flatMap((result) => result.status === "fulfilled" ? result.value : [])
+        .filter((stock, index, stocks) => stocks.findIndex((item) => item.market === stock.market && item.symbol === stock.symbol) === index)
+        .slice(0, 10);
+    },
     async addSubscriptionBatch(items) {
       if (!items.length || this.subscriptionBatchLoading) return;
       this.subscriptionBatchLoading = true;
@@ -1306,6 +1323,19 @@ const app = createApp({
       this.dashboardColumns = columns;
       localStorage.setItem("stock-harness-dashboard-columns", String(columns));
       nextTick(() => this.renderDashboardCharts());
+    },
+    setDashboardRefreshMinutes(minutes) {
+      this.dashboardRefreshMinutes = Number(minutes) || 0;
+      localStorage.setItem("stock-harness-dashboard-refresh-minutes", String(this.dashboardRefreshMinutes));
+      this.restartDashboardRefreshTimer();
+    },
+    restartDashboardRefreshTimer() {
+      if (this.dashboardRefreshTimer) clearInterval(this.dashboardRefreshTimer);
+      this.dashboardRefreshTimer = null;
+      if (!this.token || this.activeModule !== "dashboard" || this.dashboardRefreshMinutes <= 0) return;
+      this.dashboardRefreshTimer = setInterval(() => {
+        if (!this.dashboardLoading && this.activeModule === "dashboard") void this.refreshDashboardCharts();
+      }, this.dashboardRefreshMinutes * 60_000);
     },
     chartSettingFor(id) {
       return this.subscriptionChartSettings[id] ?? { range: "month", interval: "1d" };
@@ -1999,13 +2029,20 @@ const app = createApp({
         window.open(target.href, "_blank", "noopener,noreferrer");
         return;
       }
-      const symbol = String(link.dataset.stockSymbol || "").trim().toUpperCase();
+      const rawSymbol = String(link.dataset.stockSymbol || "").trim().toUpperCase();
+      const symbol = rawSymbol.replace(/\.(SZ|SH|SS|HK|US)$/i, "");
       const stock = this.subscriptions.find((item) => String(item.symbol || "").trim().toUpperCase() === symbol);
-      if (!stock) {
-        this.error = `未找到股票 ${symbol}，请先将它添加到订阅。`;
-        return;
-      }
-      const target = this.$router.resolve({ name: "stock-detail", params: { market: this.marketRouteSegment(stock.market), symbol: stock.symbol } });
+      const inferredMarket = /\.(SZ|SH|SS)$/i.test(rawSymbol)
+        ? "A Share"
+        : /\.HK$/i.test(rawSymbol)
+          ? "Hong Kong"
+          : /^[A-Z][A-Z0-9.-]*$/.test(rawSymbol)
+            ? "US"
+            : "A Share";
+      const target = this.$router.resolve({
+        name: "stock-detail",
+        params: { market: this.marketRouteSegment(stock?.market || inferredMarket), symbol: stock?.symbol || symbol },
+      });
       window.open(target.href, "_blank", "noopener,noreferrer");
     },
     parsePluginBlock(raw) {
@@ -2526,6 +2563,14 @@ const app = createApp({
             <div class="dashboard-toolbar-actions">
               <a-button type="primary" size="small" @click="subscriptionDrawerOpen = true"><template #icon><IconStar /></template>添加订阅</a-button>
               <a-button size="small" :loading="dashboardLoading" @click="refreshDashboardCharts">刷新全部</a-button>
+              <a-select class="dashboard-refresh-select" :model-value="dashboardRefreshMinutes" size="small" aria-label="自动刷新周期" @change="setDashboardRefreshMinutes">
+                <a-option :value="0">自动刷新：关闭</a-option>
+                <a-option :value="1">每 1 分钟刷新</a-option>
+                <a-option :value="5">每 5 分钟刷新</a-option>
+                <a-option :value="10">每 10 分钟刷新</a-option>
+                <a-option :value="30">每 30 分钟刷新</a-option>
+                <a-option :value="60">每 60 分钟刷新</a-option>
+              </a-select>
               <a-select v-if="dashboardViewMode === 'cards'" v-model="chartLocale" size="small" @change="renderDashboardCharts"><a-option value="zh-CN">中文</a-option><a-option value="en-US">English</a-option></a-select>
             </div>
           </div>
@@ -2983,6 +3028,7 @@ const app = createApp({
                 :loading="chatLoading"
                 :roles="chatRoles"
                 :subscriptions="subscriptions"
+                :search-stocks="searchChatStocks"
                 :skills="skills"
                 :plugins="plugins"
                 :starters="chatStarters"
@@ -3036,7 +3082,7 @@ const app = createApp({
               <label>执行模型<select v-model="taskForm.modelConfigId"><option value="">请选择模型</option><option v-for="model in modelConfigs" :key="model.id" :value="model.id">{{ model.name || model.model }}</option></select></label>
               <label>执行周期<select v-model="taskForm.schedule"><option value="daily">每日执行</option><option value="weekly">每周执行</option></select></label>
               <label class="task-prompt-field">任务指令
-                <RichChatComposer ref="taskComposer" v-model="taskForm.prompt" class="task-prompt-composer" placeholder="输入 @ 指定角色、# 选择股票、/ 调用技能与插件" :roles="chatRoles" :subscriptions="subscriptions" :skills="skills" :plugins="plugins" :starters="chatStarters" :show-attachments="false" :show-submit="false" @select-role="taskForm.roleId = $event" />
+                <RichChatComposer ref="taskComposer" v-model="taskForm.prompt" class="task-prompt-composer" placeholder="输入 @ 指定角色、# 选择股票、/ 调用技能与插件" :roles="chatRoles" :subscriptions="subscriptions" :search-stocks="searchChatStocks" :skills="skills" :plugins="plugins" :starters="chatStarters" :show-attachments="false" :show-submit="false" @select-role="taskForm.roleId = $event" />
               </label>
               <div class="button-row"><a-button @click="taskDrawerOpen = false">取消</a-button><a-button type="primary" html-type="submit">创建定时任务</a-button></div>
             </form>
