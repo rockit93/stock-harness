@@ -353,6 +353,8 @@ const app = createApp({
       savedTasks: JSON.parse(localStorage.getItem("stock-harness-pi-tasks") || "[]"),
       taskProjectFilterId: null,
       chatLoading: false,
+      chatElapsedSeconds: 0,
+      chatProgressTimer: null,
       chatRecoveryTimer: null,
       chatSessionId: null,
       chatMessages: [],
@@ -604,6 +606,7 @@ const app = createApp({
   beforeUnmount() {
     if (this.currentPriceTimer) clearInterval(this.currentPriceTimer);
     if (this.chatRecoveryTimer) clearTimeout(this.chatRecoveryTimer);
+    if (this.chatProgressTimer) clearInterval(this.chatProgressTimer);
     disposeDashboardCharts();
   },
   methods: {
@@ -1805,6 +1808,9 @@ const app = createApp({
     async startChat() {
       if ((!this.chatForm.message.trim() && !this.chatAttachments.length) || this.chatLoading) return;
       this.chatLoading = true;
+      this.chatElapsedSeconds = 0;
+      if (this.chatProgressTimer) clearInterval(this.chatProgressTimer);
+      this.chatProgressTimer = setInterval(() => { this.chatElapsedSeconds += 1; }, 1000);
       this.chatReply = "";
       this.chatThinking = "";
       this.chatTrace = null;
@@ -1858,7 +1864,17 @@ const app = createApp({
         else this.chatMessages = this.chatMessages.filter((item) => item.content !== userMessage || item.role !== "user");
       } finally {
         this.chatLoading = false;
+        if (this.chatProgressTimer) clearInterval(this.chatProgressTimer);
+        this.chatProgressTimer = null;
       }
+    },
+    chatProgressLabel() {
+      if (this.chatReply) return "正在生成回答";
+      if (this.chatThinking) return "正在整理分析结果";
+      if (this.chatElapsedSeconds < 3) return "正在连接智能体";
+      if (this.chatElapsedSeconds < 10) return "正在理解任务并准备数据";
+      if (this.chatElapsedSeconds < 30) return "正在调用模型或内部工具";
+      return "任务仍在处理中，请稍候";
     },
     consumeChatEvent(line) {
       if (!line.trim()) return;
@@ -2885,6 +2901,10 @@ const app = createApp({
                   <template #content="{ item }">
                   <div :class="['message-body', 'element-message-body', item.role]">
                     <strong>{{ item.role === "user" ? "你" : item.roleName }}</strong>
+                    <div v-if="item.loading" class="agent-progress-card" role="status" aria-live="polite">
+                      <span class="agent-progress-orbit"><i></i></span>
+                      <div><b>{{ chatProgressLabel() }}</b><small>已用时 {{ chatElapsedSeconds }} 秒，完成后会自动显示结果</small></div>
+                    </div>
                     <details v-if="item.role === 'assistant' && thinkingText(item.content, item.thinking)" class="execution-panel thinking-panel">
                       <summary><span>{{ item.streaming && chatLoading ? '正在思考' : '思考过程' }}</span><small>{{ thinkingText(item.content, item.thinking).length }} 字</small></summary>
                       <div class="execution-content markdown-body" v-html="thinkingHtml(item.content, item.thinking)"></div>

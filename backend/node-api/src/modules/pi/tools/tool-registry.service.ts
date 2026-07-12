@@ -12,8 +12,13 @@ import { AlphaDockApiHandler } from "./alphadock-api.handler";
 
 @Injectable()
 export class ToolRegistryService {
-  constructor(private readonly settings: SettingsRepository, private readonly subscriptions: SubscriptionsRepository) {}
-  private readonly tools = this.loadTools();
+  private readonly tools: ReturnType<ToolRegistryService["loadTools"]>;
+
+  constructor(private readonly settings: SettingsRepository, private readonly subscriptions: SubscriptionsRepository) {
+    // Native class fields are initialized before constructor parameter properties.
+    // Build handlers here so injected repositories are available to them.
+    this.tools = this.loadTools();
+  }
 
   private loadTools() {
     const root = this.workspaceRoot();

@@ -7,7 +7,7 @@ import { ModelMonitoringRepository } from "../monitoring/model-monitoring.reposi
 const SYSTEM_DATA_SOURCE_SKILL = `
 ## system:data-source
 Pi has a built-in data-source skill for market data and quant research.
-- Always use the current user's configured market routing. A data-source provider (such as Futu, AkShare, Tushare Pro, Yahoo Finance, SEC EDGAR, or a custom HTTP source) is an implementation selected at runtime, not a separate user-facing skill.
+- Always use the current user's configured platform data-source routing. A provider (such as Futu, AkShare, Tushare Pro, Yahoo Finance, SEC EDGAR, or a custom HTTP source) is selected at runtime and is not a separate user-facing skill.
 - Prefer the local platform data tools when the user asks about quotes, K-line data, snapshots, market search, fundamentals, indicators, or subscriptions.
 - If the selected route contains Futu, connect through the configured Futu OpenD host and port. Do not assume Futu is selected merely because it is available.
 - Normalize symbols before analysis: HK.00700 for Hong Kong stocks, US.AAPL for US stocks, SH.600519/SZ.000001 for A shares, CC.BTCUSD for crypto pairs.
@@ -76,6 +76,11 @@ export class PiRuntimeService {
   }
   renameConversation(userId: number, conversationId: number, title: string) { return this.runtime.renameConversation(userId, conversationId, title); }
   setConversationArchived(userId: number, conversationId: number, archived: boolean) { return this.runtime.setConversationArchived(userId, conversationId, archived); }
+  getImConversation(userId: number, provider: string, chatId: string) { return this.runtime.getImConversation(userId, provider, chatId); }
+  setImConversation(userId: number, provider: string, chatId: string, conversationId: number) { return this.runtime.setImConversation(userId, provider, chatId, conversationId); }
+  clearImConversation(userId: number, provider: string, chatId: string, archive = true) { return this.runtime.clearImConversation(userId, provider, chatId, archive); }
+  getImProject(userId: number, provider: string, chatId: string) { return this.runtime.getImProject(userId, provider, chatId); }
+  setImProject(userId: number, provider: string, chatId: string, projectId: number | null) { return this.runtime.setImProject(userId, provider, chatId, projectId); }
 
   conversationStatus(userId: number, conversationId: number) {
     this.runtime.getConversation(userId, conversationId);

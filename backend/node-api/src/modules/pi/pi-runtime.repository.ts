@@ -53,6 +53,16 @@ export class PiRuntimeRepository {
       CREATE TABLE IF NOT EXISTS pi_project_plugins (project_id INTEGER NOT NULL, plugin_id INTEGER NOT NULL, PRIMARY KEY (project_id, plugin_id));
       CREATE TABLE IF NOT EXISTS pi_project_tools (project_id INTEGER NOT NULL, tool_name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT, PRIMARY KEY (project_id, tool_name));
       CREATE TABLE IF NOT EXISTS role_tools (role_id INTEGER NOT NULL, tool_name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, config_json TEXT, PRIMARY KEY (role_id, tool_name));
+      CREATE TABLE IF NOT EXISTS pi_im_sessions (
+        user_id INTEGER NOT NULL, provider TEXT NOT NULL, external_chat_id TEXT NOT NULL,
+        conversation_id INTEGER NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, provider, external_chat_id)
+      );
+      CREATE TABLE IF NOT EXISTS pi_im_projects (
+        user_id INTEGER NOT NULL, provider TEXT NOT NULL, external_chat_id TEXT NOT NULL,
+        project_id INTEGER, updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, provider, external_chat_id)
+      );
     `);
     this.ensureNullableConversationRoleId();
     this.ensureColumn("pi_conversations", "role_id", "INTEGER");
@@ -107,6 +117,45 @@ export class PiRuntimeRepository {
       `)
       .run(userId, projectId, roleId, model, title, now, now);
     return Number(result.lastInsertRowid);
+  }
+
+  getImConversation(userId: number, provider: string, externalChatId: string): number | null {
+    const row = this.db.prepare(`SELECT s.conversation_id FROM pi_im_sessions s
+      JOIN pi_conversations c ON c.id=s.conversation_id AND c.user_id=s.user_id
+      WHERE s.user_id=? AND s.provider=? AND s.external_chat_id=? AND c.archived_at IS NULL`)
+      .get(userId, provider, externalChatId) as { conversation_id: number } | undefined;
+    return row ? Number(row.conversation_id) : null;
+  }
+
+  setImConversation(userId: number, provider: string, externalChatId: string, conversationId: number) {
+    this.getConversation(userId, conversationId);
+    this.db.prepare(`INSERT INTO pi_im_sessions (user_id,provider,external_chat_id,conversation_id,updated_at)
+      VALUES (?,?,?,?,?) ON CONFLICT(user_id,provider,external_chat_id) DO UPDATE SET
+      conversation_id=excluded.conversation_id,updated_at=excluded.updated_at`)
+      .run(userId, provider, externalChatId, conversationId, new Date().toISOString());
+  }
+
+  clearImConversation(userId: number, provider: string, externalChatId: string, archive = true) {
+    const conversationId = this.getImConversation(userId, provider, externalChatId);
+    if (conversationId && archive) this.setConversationArchived(userId, conversationId, true);
+    this.db.prepare("DELETE FROM pi_im_sessions WHERE user_id=? AND provider=? AND external_chat_id=?").run(userId, provider, externalChatId);
+    return conversationId;
+  }
+
+  getImProject(userId: number, provider: string, externalChatId: string): number | null {
+    const row = this.db.prepare("SELECT project_id FROM pi_im_projects WHERE user_id=? AND provider=? AND external_chat_id=?")
+      .get(userId, provider, externalChatId) as { project_id: number | null } | undefined;
+    if (!row?.project_id) return null;
+    try { this.getProject(userId, Number(row.project_id)); return Number(row.project_id); }
+    catch { this.db.prepare("DELETE FROM pi_im_projects WHERE user_id=? AND provider=? AND external_chat_id=?").run(userId, provider, externalChatId); return null; }
+  }
+
+  setImProject(userId: number, provider: string, externalChatId: string, projectId: number | null) {
+    if (projectId) this.getProject(userId, projectId);
+    this.db.prepare(`INSERT INTO pi_im_projects (user_id,provider,external_chat_id,project_id,updated_at)
+      VALUES (?,?,?,?,?) ON CONFLICT(user_id,provider,external_chat_id) DO UPDATE SET
+      project_id=excluded.project_id,updated_at=excluded.updated_at`)
+      .run(userId, provider, externalChatId, projectId, new Date().toISOString());
   }
 
   listConversations(userId: number, limit = 100) {

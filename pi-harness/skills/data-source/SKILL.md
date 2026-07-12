@@ -1,4 +1,4 @@
-# Data Source Skill
+# 平台数据源 Skill
 
 Use this skill when adding, debugging, or extending market-data access in the local quant assistant.
 

@@ -417,21 +417,22 @@ export class PiRepository {
   }
 
   private seedSystemSkills() {
-    // Keep the existing row id so role/project assignments survive the provider-neutral rename.
+    const dataSourceDescription = "按照用户当前配置的平台数据源与市场路由获取行情和基本面数据。";
+    const dataSourceContent = "# 平台数据源\n\n始终读取用户当前的平台数据源与市场路由配置。Futu、AkShare、Tushare Pro、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。";
+    // Normalize the original system row first, keeping its id as the canonical id.
     this.db.prepare(
       `UPDATE pi_skills
        SET name = ?, description = ?, content = ?, updated_at = ?
-       WHERE is_system = 1 AND name = ?`,
+       WHERE is_system = 1 AND name IN ('Futu 数据源', '数据源', '平台数据源')`,
     ).run(
-      "数据源",
-      "按照用户当前配置的市场路由获取行情与基本面数据。",
-      "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Tushare Pro、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。",
+      "平台数据源",
+      dataSourceDescription,
+      dataSourceContent,
       new Date().toISOString(),
-      "Futu 数据源",
     );
     const skills = [
       ["量化研究规范", "将投资想法拆成可验证、可回测、可解释的研究流程。", "# 量化研究规范\n\n先明确市场、标的、周期、入场、出场与风控规则；使用确定性数据与回测工具验证；清楚区分研究结论与投资建议。"],
-      ["数据源", "按照用户当前配置的市场路由获取行情与基本面数据。", "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Tushare Pro、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。"],
+      ["平台数据源", dataSourceDescription, dataSourceContent],
     ];
     const insert = this.db.prepare(
       `INSERT INTO pi_skills (user_id, name, description, content, source_type, created_at, updated_at, visibility, is_system)
@@ -443,6 +444,22 @@ export class PiRepository {
         const now = new Date().toISOString();
         insert.run(name, description, content, now, now);
       }
+    }
+    const canonical = this.db.prepare("SELECT id FROM pi_skills WHERE is_system = 1 AND name = '平台数据源' ORDER BY id LIMIT 1").get() as { id: number } | undefined;
+    if (!canonical) return;
+    const legacyRows = this.db.prepare(
+      `SELECT id FROM pi_skills
+       WHERE id <> ? AND source_type = 'system' AND name IN ('Futu 数据源', '数据源', '平台数据源')`,
+    ).all(canonical.id) as Array<{ id: number }>;
+    for (const legacy of legacyRows) {
+      for (const table of ["role_skills", "pi_project_skills"]) {
+        const exists = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+        if (!exists) continue;
+        const ownerColumn = table === "role_skills" ? "role_id" : "project_id";
+        this.db.exec(`INSERT OR IGNORE INTO ${table} (${ownerColumn}, skill_id) SELECT ${ownerColumn}, ${canonical.id} FROM ${table} WHERE skill_id = ${legacy.id}`);
+        this.db.prepare(`DELETE FROM ${table} WHERE skill_id = ?`).run(legacy.id);
+      }
+      this.db.prepare("DELETE FROM pi_skills WHERE id = ?").run(legacy.id);
     }
   }
 
