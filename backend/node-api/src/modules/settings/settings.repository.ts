@@ -235,6 +235,11 @@ export class SettingsRepository {
     return row?.app_secret_ciphertext ? this.decryptApiKey(row.app_secret_ciphertext) : "";
   }
 
+  listEnabledImConnectors() {
+    const rows = this.db.prepare("SELECT user_id FROM user_im_connectors WHERE provider='feishu' AND enabled=1 AND app_id<>'' AND app_secret_ciphertext IS NOT NULL").all() as Array<{ user_id: number }>;
+    return rows.map((row) => ({ userId: row.user_id, config: this.getImConnector(row.user_id), appSecret: this.getImConnectorSecret(row.user_id) }));
+  }
+
   getDisplay(userId: number): DisplaySettings {
     const row = this.db.prepare("SELECT display_preferences, updated_at FROM user_settings WHERE user_id = ?").get(userId) as SettingsRow | undefined;
     return { marketColors: this.normalizeMarketColors(row?.display_preferences), updatedAt: row?.updated_at ?? null };

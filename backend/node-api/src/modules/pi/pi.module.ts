@@ -8,11 +8,13 @@ import { PiRuntimeRepository } from "./pi-runtime.repository";
 import { PiRuntimeService } from "./pi-runtime.service";
 import { ToolRegistryService } from "./tools/tool-registry.service";
 import { ModelMonitoringModule } from "../monitoring/model-monitoring.module";
+import { LarkImGatewayService } from "./lark-im-gateway.service";
+import { SubscriptionsModule } from "../subscriptions/subscriptions.module";
 
 @Module({
-  imports: [AuthModule, SettingsModule, ModelMonitoringModule],
+  imports: [AuthModule, SettingsModule, ModelMonitoringModule, SubscriptionsModule],
   controllers: [PiController],
-  providers: [PiRepository, PiWorkspaceService, PiRuntimeRepository, PiRuntimeService, ToolRegistryService],
+  providers: [PiRepository, PiWorkspaceService, PiRuntimeRepository, PiRuntimeService, ToolRegistryService, LarkImGatewayService],
   exports: [PiRepository, PiWorkspaceService],
 })
 export class PiModule {}

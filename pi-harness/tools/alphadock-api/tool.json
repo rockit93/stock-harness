@@ -1,0 +1,27 @@
+{
+  "name": "alphadock_api",
+  "version": 1,
+  "description": "Call authenticated AlphaDock internal APIs as the current user. Use this for subscriptions and other workspace operations. Never invent required values; destructive operations require explicit user intent.",
+  "risk": "write",
+  "timeoutMs": 30000,
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "operation": { "type": "string", "enum": ["subscriptions.list", "subscriptions.create", "subscriptions.delete"] },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "market": { "type": "string", "enum": ["A Share", "Hong Kong", "US"] },
+          "symbol": { "type": "string" },
+          "stockName": { "type": "string" },
+          "remark": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": ["operation"],
+    "additionalProperties": false
+  },
+  "handler": "builtin:alphadock-api"
+}

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { SettingsRepository } from "../../settings/settings.repository";
 import { ToolHandler } from "./tool.types";
+import path from "node:path";
 
 const MAX_OUTPUT = 100_000;
 const WRITE_WORDS = new Set(["send", "create", "update", "delete", "remove", "add", "reply", "upload", "overwrite", "patch", "move", "copy"]);
@@ -15,8 +16,12 @@ export class LarkCliHandler implements ToolHandler<{ args: string[] }> {
     const isWrite = args.some((arg) => WRITE_WORDS.has(arg.replace(/^\+/, "").toLowerCase()));
     if (isWrite && !config.allowWrite) throw new Error("飞书连接器当前仅允许读取操作");
     return await new Promise((resolve, reject) => {
-      const command = process.platform === "win32" ? "lark-cli.cmd" : "lark-cli";
-      const child = spawn(command, ["--profile", `alphadock-${context.userId}`, ...args], { shell: false, windowsHide: true, env: process.env });
+      const windows = process.platform === "win32";
+      const command = windows ? process.execPath : "lark-cli";
+      const cliArgs = windows
+        ? [path.join(process.env.APPDATA || "", "npm", "node_modules", "@larksuite", "cli", "scripts", "run.js"), "--profile", `alphadock-${context.userId}`, ...args]
+        : ["--profile", `alphadock-${context.userId}`, ...args];
+      const child = spawn(command, cliArgs, { shell: false, windowsHide: true, env: process.env });
       let stdout = "", stderr = "", truncated = false;
       const append = (value: string, chunk: Buffer) => { const next = value + chunk.toString("utf8"); if (next.length <= MAX_OUTPUT) return next; truncated = true; return next.slice(0, MAX_OUTPUT); };
       child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });

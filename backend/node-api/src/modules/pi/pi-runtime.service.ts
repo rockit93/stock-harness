@@ -19,6 +19,10 @@ const SYSTEM_LARK_SKILL = `
 ## system:lark
 Use the official lark-cli through the lark_cli tool for Feishu/Lark IM, docs, calendar, tasks, sheets, drive, and wiki operations. Discover parameters with domain --help or schema and prefer + shortcuts. Respect connector read/write permissions, never expose credentials or tokens, dry-run high-risk writes, and require explicit confirmation before --yes.
 `;
+const SYSTEM_ALPHADOCK_API_SKILL = `
+## system:alphadock-api
+Use the alphadock_api tool to operate the current user's AlphaDock workspace. Map Chinese market names to API values: A股=A Share, 港股=Hong Kong, 美股=US. For subscriptions.create, supply the exact symbol and stock name. Read operations are safe. Only perform create/delete operations when the user explicitly asks for that change; ask for missing required identifiers instead of guessing.
+`;
 
 const SHARED_CONVERSATION_PROTOCOL = `
 ## Shared conversation context
@@ -101,7 +105,7 @@ export class PiRuntimeService {
     const selectedModel = String(route.role?.model_config_id ? modelSettings.model : (body.model ?? modelSettings.model)).trim();
     if (!selectedModel) throw new BadRequestException("Model cannot be empty");
     const context = this.runtime.getRuntimeContext(userId, route.role?.id ?? null, projectId);
-    const allowedToolNames = this.runtime.resolveToolNames(userId, projectId, route.role?.id ?? null, this.tools.names());
+    const allowedToolNames = [...new Set([...this.runtime.resolveToolNames(userId, projectId, route.role?.id ?? null, this.tools.names()), "alphadock_api"])].filter((name) => this.tools.names().includes(name));
     const sessionIdInput = Number(body.sessionId ?? body.conversationId ?? 0);
     const conversationId = Number.isInteger(sessionIdInput) && sessionIdInput > 0
       ? this.validateConversationProject(userId, sessionIdInput, projectId)
@@ -288,6 +292,7 @@ export class PiRuntimeService {
       sections.unshift(`当前项目：${context.project.name}\n项目说明：${context.project.description || "暂无"}\n项目公共指令：${context.project.instructions || "暂无"}`);
     }
     sections.push(`${SYSTEM_DATA_SOURCE_SKILL}\nCurrent user routing: ${JSON.stringify(dataSources.providerChains)}\nFutu endpoint (only when selected by a route): ${dataSources.futuHost}:${dataSources.futuPort}`);
+    sections.push(SYSTEM_ALPHADOCK_API_SKILL);
     if (larkEnabled) sections.push(SYSTEM_LARK_SKILL);
     if (context.skills.length) {
       sections.push(`当前角色已启用 Skills：\n${context.skills.map((item) => `## ${item.name}\n${item.description}\n${item.content}`).join("\n\n")}`);

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",
+    "@larksuiteoapi/node-sdk": "^1.70.0",
     "@nestjs/common": "^11.1.0",
     "@nestjs/core": "^11.1.0",
     "@nestjs/platform-fastify": "^11.1.0",

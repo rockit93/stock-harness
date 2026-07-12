@@ -11,6 +11,7 @@
       "tools/system-command/tool.json",
       "tools/web-fetch/tool.json"
       ,"tools/lark-cli/tool.json"
+      ,"tools/alphadock-api/tool.json"
     ],
     "roles": [
       "roles/market-observer.json",
