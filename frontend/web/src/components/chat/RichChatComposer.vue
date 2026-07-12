@@ -116,7 +116,9 @@ function selectSuggestion(item) {
     chain.insertContent([{ type: "mention", attrs: { id: `role:${item.id}`, label: item.label } }, { type: "text", text: " " }]).run();
     emit("select-role", item.id);
   } else if (item.type === "stock") {
-    chain.insertContent(`#${item.stock.symbol}${item.stock.stockName ? `(${item.stock.stockName})` : ""} `).run();
+    const market = { "A Share": "a-share", "Hong Kong": "hk", US: "us" }[item.stock.market] || "a-share";
+    const label = `#${item.stock.symbol}${item.stock.stockName ? `(${item.stock.stockName})` : ""}`;
+    chain.insertContent(`[${label}](/stock/${market}/${encodeURIComponent(item.stock.symbol)}) `).run();
   } else if (item.type === "starter") {
     chain.insertContent(`${item.prompt} `).run();
   } else {

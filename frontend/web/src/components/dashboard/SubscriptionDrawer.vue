@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { IconDelete, IconSearch, IconStar } from "@arco-design/web-vue/es/icon";
+import StockLink from "../stock/StockLink.vue";
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -48,7 +49,7 @@ function add(item) {
     <div class="result-list">
       <a-empty v-if="!results.length" description="输入股票代码或名称开始搜索" />
       <button v-for="item in results" :key="item.market + item.symbol" type="button" class="result-item" :disabled="subscribedKeys.has(item.market + ':' + item.symbol) || selected.some((entry) => entry.market === item.market && entry.symbol === item.symbol)" @click="add(item)">
-        <span><strong>{{ item.name }}</strong><code>{{ item.symbol }}</code></span>
+        <span><strong>{{ item.name }}</strong><StockLink :market="item.market" :symbol="item.symbol" /></span>
         <small>{{ item.market === 'A Share' ? 'A 股' : item.market === 'Hong Kong' ? '港股' : '美股' }}</small>
         <b>{{ subscribedKeys.has(item.market + ':' + item.symbol) ? '已订阅' : '添加' }}</b>
       </button>
@@ -58,7 +59,7 @@ function add(item) {
     <div class="selected-list">
       <a-empty v-if="!selected.length" description="尚未选择股票" />
       <div v-for="(item, index) in selected" :key="item.market + item.symbol" class="selected-item">
-        <div><strong>{{ item.stockName }}</strong><code>{{ item.symbol }}</code></div>
+        <div><strong>{{ item.stockName }}</strong><StockLink :market="item.market" :symbol="item.symbol" /></div>
         <a-input v-model="item.remark" size="small" placeholder="备注，可选" />
         <a-button type="text" status="danger" shape="circle" @click="selected.splice(index, 1)"><IconDelete /></a-button>
       </div>

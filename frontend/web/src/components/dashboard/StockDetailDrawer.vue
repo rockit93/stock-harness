@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { dispose, init } from "klinecharts";
 import { chartThemeStyles } from "../../chartTheme.js";
+import StockLink from "../stock/StockLink.vue";
 
 const props = defineProps({ visible: Boolean, stock: Object, bars: { type: Array, default: () => [] }, fundamentals: Object, labels: { type: Array, default: () => [] }, currentPrice: Object, strategies: { type: Array, default: () => [] }, marketColors: { type: Object, default: () => ({}) } });
 const emit = defineEmits(["update:visible"]);
@@ -44,7 +45,7 @@ onBeforeUnmount(() => { if (chart) dispose(chart); });
 
 <template>
   <a-drawer :visible="visible" :width="760" :footer="false" unmount-on-close @cancel="emit('update:visible', false)">
-    <template #title>{{ stock?.stockName || stock?.name || '股票详情' }} · {{ stock?.symbol }}</template>
+    <template #title>{{ stock?.stockName || stock?.name || '股票详情' }} · <StockLink v-if="stock" :market="stock.market" :symbol="stock.symbol" /></template>
     <template v-if="stock">
       <div class="stock-summary"><div><small>当前价</small><strong>{{ currentPrice ? Number(currentPrice.price).toFixed(2) : '-' }}</strong></div><div><small>市场</small><strong>{{ stock.market }}</strong></div><div><small>所属板块</small><strong>{{ fundamentals?.sector || fundamentals?.industry || '暂无' }}</strong></div></div>
       <div class="drawer-section"><div class="section-head"><h3>K 线预览</h3><span>当前图表设置对应的行情区间</span></div><div v-if="bars.length" ref="chartNode" class="detail-kline"></div><a-empty v-else description="暂无 K 线数据" /></div>

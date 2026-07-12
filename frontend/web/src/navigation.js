@@ -12,6 +12,7 @@ export const secondaryNavigation = {
   strategy: [
     { key: "label-strategies", label: "标签策略", icon: "tags" },
     { key: "backtest-strategies", label: "回测策略", icon: "experiment" },
+    { key: "backtest-datasets", label: "回测数据集", icon: "dashboard" },
   ],
   assistant: [
     { key: "pi-chat", label: "新任务", icon: "message" },
@@ -36,6 +37,7 @@ export const secondaryNavigation = {
     },
   ],
   system: [
+    { key: "im-connectors", label: "IM 连接器", icon: "message" },
     {
       key: "personal-settings",
       label: "个人设置",

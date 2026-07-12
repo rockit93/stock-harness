@@ -15,6 +15,11 @@ Pi has a built-in data-source skill for market data and quant research.
 - When returning structured Futu/plugin results to the UI, the assistant may emit a fenced pi-plugin JSON block with kind "table" or "card".
 `;
 
+const SYSTEM_LARK_SKILL = `
+## system:lark
+Use the official lark-cli through the lark_cli tool for Feishu/Lark IM, docs, calendar, tasks, sheets, drive, and wiki operations. Discover parameters with domain --help or schema and prefer + shortcuts. Respect connector read/write permissions, never expose credentials or tokens, dry-run high-risk writes, and require explicit confirmation before --yes.
+`;
+
 const SHARED_CONVERSATION_PROTOCOL = `
 ## Shared conversation context
 This conversation is a shared workspace between the user and multiple specialist roles.
@@ -117,13 +122,13 @@ export class PiRuntimeService {
       role: route.role?.name ?? "个人助手",
       roleId: route.role?.id ?? null,
       route: route.route,
-      skills: ["system:data-source", ...context.skills.map((item) => item.name)],
+      skills: ["system:data-source", ...(this.settings.getImConnector(userId).enabled ? ["system:lark"] : []), ...context.skills.map((item) => item.name)],
       plugins: context.plugins.map((item) => item.name),
     });
     const activeKey = `${userId}:${conversationId}`;
     this.activeConversations.add(activeKey);
 
-    const systemPrompt = this.buildSystemPrompt(context, roles, modelSettings.contextBudgetTokens, this.settings.get(userId));
+    const systemPrompt = this.buildSystemPrompt(context, roles, modelSettings.contextBudgetTokens, this.settings.get(userId), this.settings.getImConnector(userId).enabled);
     const history = this.runtime.listMessages(conversationId, 24);
     const messages: any[] = [
       { role: "system", content: systemPrompt },
@@ -186,7 +191,7 @@ export class PiRuntimeService {
         trace: {
           model: selectedModel,
           route: route.route,
-          skills: ["system:data-source", ...context.skills.map((item) => item.name)],
+          skills: ["system:data-source", ...(this.settings.getImConnector(userId).enabled ? ["system:lark"] : []), ...context.skills.map((item) => item.name)],
           plugins: context.plugins.map((item) => item.name),
           tools: toolTrace,
           input: message,
@@ -269,7 +274,7 @@ export class PiRuntimeService {
     return null;
   }
 
-  private buildSystemPrompt(context: ReturnType<PiRuntimeRepository["getRuntimeContext"]>, roles: RuntimeRole[], tokenBudget: number, dataSources: ReturnType<SettingsRepository["get"]>) {
+  private buildSystemPrompt(context: ReturnType<PiRuntimeRepository["getRuntimeContext"]>, roles: RuntimeRole[], tokenBudget: number, dataSources: ReturnType<SettingsRepository["get"]>, larkEnabled: boolean) {
     const roleText = context.role
       ? `你当前以 Pi Runtime 角色「${context.role.name}」回复。\n职责：${context.role.responsibility}\n角色提示词：${context.role.system_prompt}`
       : "你当前以用户的个人量化助手身份回复。若用户通过 @角色名 指派角色，或任务明显属于某个角色职责，应说明将由哪个角色处理。";
@@ -283,6 +288,7 @@ export class PiRuntimeService {
       sections.unshift(`当前项目：${context.project.name}\n项目说明：${context.project.description || "暂无"}\n项目公共指令：${context.project.instructions || "暂无"}`);
     }
     sections.push(`${SYSTEM_DATA_SOURCE_SKILL}\nCurrent user routing: ${JSON.stringify(dataSources.providerChains)}\nFutu endpoint (only when selected by a route): ${dataSources.futuHost}:${dataSources.futuPort}`);
+    if (larkEnabled) sections.push(SYSTEM_LARK_SKILL);
     if (context.skills.length) {
       sections.push(`当前角色已启用 Skills：\n${context.skills.map((item) => `## ${item.name}\n${item.description}\n${item.content}`).join("\n\n")}`);
     }

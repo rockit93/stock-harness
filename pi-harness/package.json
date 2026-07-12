@@ -10,6 +10,7 @@
     "tools": [
       "tools/system-command/tool.json",
       "tools/web-fetch/tool.json"
+      ,"tools/lark-cli/tool.json"
     ],
     "roles": [
       "roles/market-observer.json",
@@ -21,6 +22,7 @@
     "skills": [
       "skills/quant-research/SKILL.md",
       "skills/data-source/SKILL.md"
+      ,"skills/lark/SKILL.md"
     ],
     "plugins": [
       "plugins/market-summary/plugin.json"

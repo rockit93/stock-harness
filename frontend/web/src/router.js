@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 // Routes provide stable URLs while metadata selects a view in the existing shell.
 export const moduleRoutes = {
   dashboard: { name: "dashboard", path: "/dashboard" },
+  "stock-detail": { name: "stock-detail", path: "/stock/:market/:symbol" },
   "label-strategies": { name: "label-strategies", path: "/strategies/labels" },
   "pi-chat": { name: "pi-chat", path: "/chat/:projectId/:conversationId" },
   "pi-projects": { name: "pi-projects", path: "/pi/projects" },
@@ -14,7 +15,9 @@ export const moduleRoutes = {
   models: { name: "models", path: "/system/models" },
   "model-monitoring": { name: "model-monitoring", path: "/system/model-monitoring" },
   "display-settings": { name: "display-settings", path: "/system/display" },
+  "im-connectors": { name: "im-connectors", path: "/system/im-connectors" },
   "backtest-strategies": { name: "backtest-strategies", path: "/strategies/backtest" },
+  "backtest-datasets": { name: "backtest-datasets", path: "/strategies/backtest-datasets" },
 };
 
 const routes = Object.entries(moduleRoutes).map(([module, route]) => ({

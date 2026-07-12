@@ -5,15 +5,18 @@ import { performance } from "node:perf_hooks";
 import { SystemCommandHandler } from "./system-command.handler";
 import { ToolContext, ToolManifest, ToolResult } from "./tool.types";
 import { WebFetchHandler } from "./web-fetch.handler";
+import { SettingsRepository } from "../../settings/settings.repository";
+import { LarkCliHandler } from "./lark-cli.handler";
 
 @Injectable()
 export class ToolRegistryService {
+  constructor(private readonly settings: SettingsRepository) {}
   private readonly tools = this.loadTools();
 
   private loadTools() {
     const root = this.workspaceRoot();
     const packageJson = JSON.parse(readFileSync(path.join(root, "pi-harness", "package.json"), "utf8")) as { pi?: { tools?: string[] } };
-    const handlers = { "builtin:system-command": new SystemCommandHandler(), "builtin:web-fetch": new WebFetchHandler() } as const;
+    const handlers = { "builtin:system-command": new SystemCommandHandler(), "builtin:web-fetch": new WebFetchHandler(), "builtin:lark-cli": new LarkCliHandler(this.settings) } as const;
     const entries = (packageJson.pi?.tools || []).map((relativePath) => {
       const manifest = JSON.parse(readFileSync(path.join(root, "pi-harness", relativePath), "utf8")) as ToolManifest;
       const handler = handlers[manifest.handler as keyof typeof handlers];

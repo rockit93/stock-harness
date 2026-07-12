@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { IconStarFill } from "@arco-design/web-vue/es/icon";
 import StockDetailDrawer from "./StockDetailDrawer.vue";
+import StockLink from "../stock/StockLink.vue";
 
 const props = defineProps({ subscriptions: { type: Array, default: () => [] }, fundamentals: { type: Object, default: () => ({}) }, chartData: { type: Object, default: () => ({}) }, currentPrices: { type: Object, default: () => ({}) }, labels: { type: Object, default: () => ({}) }, strategies: { type: Array, default: () => [] }, marketLabel: { type: Function, required: true }, marketColors: { type: Object, default: () => ({}) } });
 defineEmits(["unsubscribe"]);
@@ -28,7 +29,7 @@ function hitLabels(record) {
   <a-table class="subscription-table" :data="group.items" row-key="id" :pagination="false" :bordered="false" stripe :scroll="{ x: 1250 }">
     <template #columns>
       <a-table-column title="公司 / 代码" :width="210">
-        <template #cell="{ record }"><strong>{{ record.stockName || record.name || marketLabel(record.market) }}</strong><code>{{ record.symbol }}</code></template>
+        <template #cell="{ record }"><strong>{{ record.stockName || record.name || marketLabel(record.market) }}</strong><StockLink :market="record.market" :symbol="record.symbol" /></template>
       </a-table-column>
       <a-table-column title="市场" :width="100"><template #cell="{ record }">{{ marketLabel(record.market) }}</template></a-table-column>
       <a-table-column title="所属板块" :width="150"><template #cell="{ record }">{{ fundamentals[record.id]?.sector || fundamentals[record.id]?.industry || '暂无' }}</template></a-table-column>

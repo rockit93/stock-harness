@@ -19,6 +19,8 @@ import DashboardViewControls from "./components/dashboard/DashboardViewControls.
 import StockChartControls from "./components/dashboard/StockChartControls.vue";
 import SubscriptionTable from "./components/dashboard/SubscriptionTable.vue";
 import SubscriptionDrawer from "./components/dashboard/SubscriptionDrawer.vue";
+import StockWorkspace from "./components/stock/StockWorkspace.vue";
+import StockLink from "./components/stock/StockLink.vue";
 import { findPrimaryKey, primaryNavigation } from "./navigation.js";
 import { chartThemeStyles } from "./chartTheme.js";
 import { PI_RUNTIME_PROVIDER, PiRuntimeProvider } from "./piLlmProvider.js";
@@ -50,6 +52,23 @@ markdown.inline.ruler.before("link", "role_mention", (state, silent) => {
   return true;
 });
 markdown.renderer.rules.role_mention = (tokens, index) => `<span class="chat-mention">@${markdown.utils.escapeHtml(tokens[index].content)}</span>`;
+markdown.inline.ruler.before("link", "stock_mention", (state, silent) => {
+  if (state.linkLevel > 0) return false;
+  const match = state.src.slice(state.pos).match(/^#([A-Za-z0-9.]+)(?:\(([^)\n]+)\))?/);
+  if (!match) return false;
+  if (!silent) {
+    const token = state.push("stock_mention", "a", 0);
+    token.meta = { symbol: match[1], name: match[2] || "" };
+  }
+  state.pos += match[0].length;
+  return true;
+});
+markdown.renderer.rules.stock_mention = (tokens, index) => {
+  const { symbol, name } = tokens[index].meta;
+  const safeSymbol = markdown.utils.escapeHtml(symbol);
+  const safeName = markdown.utils.escapeHtml(name);
+  return `<a class="chat-stock-link" href="/dashboard?stock=${encodeURIComponent(symbol)}" data-stock-symbol="${safeSymbol}">#${safeSymbol}${safeName ? `(${safeName})` : ""}</a>`;
+};
 registerProvider(PI_RUNTIME_PROVIDER, PiRuntimeProvider);
 
 async function configurePiRuntimeClient(modelSettings) {
@@ -181,7 +200,7 @@ const roleColumns = [
 ];
 
 const app = createApp({
-  components: { AppShell, BacktestForm, BacktestResults, BacktestStrategyManager, BubbleList, Thinking, RichChatComposer, DashboardViewControls, StockChartControls, SubscriptionTable, SubscriptionDrawer, IconStar, IconStarFill },
+  components: { AppShell, BacktestForm, BacktestResults, BacktestStrategyManager, BubbleList, Thinking, RichChatComposer, DashboardViewControls, StockChartControls, SubscriptionTable, SubscriptionDrawer, StockWorkspace, StockLink, IconStar, IconStarFill },
   data() {
     return {
       token: localStorage.getItem("stock-harness-token") ?? sessionStorage.getItem("stock-harness-token") ?? "",
@@ -231,6 +250,10 @@ const app = createApp({
         marketColors: { "A Share": "red-up", "Hong Kong": "red-up", US: "green-up" },
         updatedAt: null,
       },
+      imConnector: { provider: "feishu", enabled: false, brand: "feishu", appId: "", appSecret: "", hasAppSecret: false, allowWrite: false, updatedAt: null },
+      imConnectorStatus: null,
+      imConnectorTesting: false,
+      imConnectorAuthorizing: false,
       httpDataSources: [],
       dataSourceDrawerOpen: false,
       dataSourceRoutingOpen: false,
@@ -339,6 +362,7 @@ const app = createApp({
       chatAttachments: [],
       chatSidebarOpen: true,
       expandedProjectIds: JSON.parse(localStorage.getItem("stock-harness-expanded-projects") || "[]"),
+      expandedTaskProjectIds: JSON.parse(localStorage.getItem("stock-harness-expanded-task-projects") || "[]"),
       chatHistoryQuery: "",
       archivedChatsOpen: false,
       chatHistory: JSON.parse(localStorage.getItem("stock-harness-chat-history") || "[]"),
@@ -422,6 +446,11 @@ const app = createApp({
     };
   },
   computed: {
+    routedStock() {
+      const symbol = String(this.$route.params.symbol || "").toUpperCase();
+      const market = this.marketFromRouteSegment(this.$route.params.market);
+      return this.subscriptions.find((item) => item.market === market && String(item.symbol || "").toUpperCase() === symbol) ?? null;
+    },
     allDataSources() {
       const builtins = [
         { key: "akshare", name: "AkShare", protocol: "Python SDK", authType: "none", markets: ["A Share", "Hong Kong"], capabilities: ["bars", "symbols", "fundamentals"], enabled: true, builtin: true },
@@ -684,12 +713,43 @@ const app = createApp({
         this.renderDashboardCharts();
       }
       if (moduleName === "model-monitoring" && this.token) await this.loadModelMonitoring();
+      if (moduleName === "im-connectors" && this.token) await this.loadImConnector();
     },
     async loadDataSourceSettings() {
       this.dataSourceSettings = await this.api("/settings/data-source");
     },
     async loadDisplaySettings() {
       this.displaySettings = await this.api("/settings/display");
+    },
+    async loadImConnector() {
+      this.imConnector = { ...this.imConnector, ...(await this.api("/settings/im-connectors/feishu")), appSecret: "" };
+      await this.testImConnector();
+    },
+    async saveImConnector() {
+      this.settingsSaving = true; this.error = ""; this.settingsMessage = "";
+      try {
+        this.imConnector = { ...this.imConnector, ...(await this.api("/settings/im-connectors/feishu", { method: "PUT", body: JSON.stringify(this.imConnector) })), appSecret: "" };
+        this.settingsMessage = "飞书连接器配置已安全保存。";
+        await this.testImConnector();
+      } catch (error) { this.error = error instanceof Error ? error.message : String(error); }
+      finally { this.settingsSaving = false; }
+    },
+    async testImConnector() {
+      this.imConnectorTesting = true;
+      try { this.imConnectorStatus = await this.api("/settings/im-connectors/feishu/status"); }
+      catch (error) { this.imConnectorStatus = { ok: false, message: error instanceof Error ? error.message : String(error) }; }
+      finally { this.imConnectorTesting = false; }
+    },
+    async authorizeImConnector() {
+      this.imConnectorAuthorizing = true; this.error = "";
+      const popup = window.open("about:blank", "alphadock-feishu-auth");
+      try {
+        const result = await this.api("/settings/im-connectors/feishu/authorize", { method: "POST" });
+        if (popup) { popup.opener = null; popup.location.href = result.authorizationUrl; }
+        else window.location.href = result.authorizationUrl;
+        this.settingsMessage = "授权页面已打开；完成授权后请点击“检查连接”。";
+      } catch (error) { popup?.close(); this.error = error instanceof Error ? error.message : String(error); }
+      finally { this.imConnectorAuthorizing = false; }
     },
     marketColorStyle(market) {
       const redUp = this.displaySettings.marketColors[market] !== "green-up";
@@ -1472,6 +1532,25 @@ const app = createApp({
     isProjectExpanded(projectId) {
       return this.expandedProjectIds.includes(projectId ? Number(projectId) : 0);
     },
+    toggleProjectTasks(projectId) {
+      const key = Number(projectId);
+      const index = this.expandedTaskProjectIds.indexOf(key);
+      if (index >= 0) this.expandedTaskProjectIds.splice(index, 1); else this.expandedTaskProjectIds.push(key);
+      localStorage.setItem("stock-harness-expanded-task-projects", JSON.stringify(this.expandedTaskProjectIds));
+    },
+    areProjectTasksExpanded(projectId) {
+      return this.expandedTaskProjectIds.includes(Number(projectId));
+    },
+    projectTasks(projectId) {
+      return this.savedTasks.filter((item) => Number(item.projectId) === Number(projectId));
+    },
+    openScheduledTask(project, task) {
+      this.activeProjectId = Number(project.id);
+      localStorage.setItem("stock-harness-active-project", String(project.id));
+      this.taskProjectFilterId = Number(project.id);
+      this.resetProjectForm();
+      this.setModule("pi-tasks");
+    },
     newChatInProject(projectId) {
       this.selectProject(projectId);
       const key = projectId ? Number(projectId) : 0;
@@ -1801,7 +1880,7 @@ const app = createApp({
       this.$refs.chatComposer?.insertMention({ id: `role:${role.id}`, label: role.name });
     },
     insertStockMention(stock) {
-      const label = `#${stock.symbol}${stock.stockName ? `(${stock.stockName})` : ""} `;
+      const label = `[#${stock.symbol}${stock.stockName ? `(${stock.stockName})` : ""}](/stock/${this.marketRouteSegment(stock.market)}/${encodeURIComponent(stock.symbol)}) `;
       this.$refs.chatComposer?.insertText(label);
     },
     useChatStarter(starter) {
@@ -1854,6 +1933,31 @@ const app = createApp({
     },
     renderMarkdown(content) {
       return markdown.render(content || "");
+    },
+    marketRouteSegment(market) {
+      return { "A Share": "a-share", "Hong Kong": "hk", US: "us" }[market] || String(market || "").toLowerCase();
+    },
+    marketFromRouteSegment(segment) {
+      return { "a-share": "A Share", hk: "Hong Kong", us: "US" }[String(segment || "").toLowerCase()] || "A Share";
+    },
+    async handleMarkdownLink(event) {
+      const link = event.target?.closest?.("a[data-stock-symbol], a[href^='/stock/']");
+      if (!link) return;
+      event.preventDefault();
+      const routeMatch = String(link.getAttribute("href") || "").match(/^\/stock\/([^/]+)\/([^/?#]+)/);
+      if (routeMatch) {
+        const target = this.$router.resolve({ name: "stock-detail", params: { market: routeMatch[1], symbol: decodeURIComponent(routeMatch[2]) } });
+        window.open(target.href, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const symbol = String(link.dataset.stockSymbol || "").trim().toUpperCase();
+      const stock = this.subscriptions.find((item) => String(item.symbol || "").trim().toUpperCase() === symbol);
+      if (!stock) {
+        this.error = `未找到股票 ${symbol}，请先将它添加到订阅。`;
+        return;
+      }
+      const target = this.$router.resolve({ name: "stock-detail", params: { market: this.marketRouteSegment(stock.market), symbol: stock.symbol } });
+      window.open(target.href, "_blank", "noopener,noreferrer");
     },
     parsePluginBlock(raw) {
       try {
@@ -2363,6 +2467,10 @@ const app = createApp({
       <main :class="{ 'chat-main': activeModule === 'pi-chat' }">
         <div v-if="error" class="error">{{ error }}</div>
 
+        <section v-if="activeModule === 'stock-detail'" class="module-panel">
+          <StockWorkspace :market="marketFromRouteSegment($route.params.market)" :symbol="String($route.params.symbol || '').toUpperCase()" :stock="routedStock" :labels="routedStock ? subscriptionLabels[String(routedStock.id)] || [] : []" :request="api" :market-colors="displaySettings.marketColors" />
+        </section>
+
         <section v-if="activeModule === 'dashboard'" class="module-panel">
           <div class="dashboard-view-toolbar">
             <DashboardViewControls :view-mode="dashboardViewMode" :columns="dashboardColumns" @update:view-mode="setDashboardView" @update:columns="setDashboardColumns" />
@@ -2387,7 +2495,7 @@ const app = createApp({
                   <div>
                     <strong class="stock-heading">
                       <span>{{ item.stockName || item.name || marketLabel(item.market) }}</span>
-                      <code>{{ item.symbol }}</code>
+                      <StockLink :market="item.market" :symbol="item.symbol" />
                     </strong>
                     <span v-if="item.remark" class="stock-remark">{{ item.remark }}</span>
                   </div>
@@ -2462,7 +2570,7 @@ const app = createApp({
                   <template #cell="{ record }"><a-tag>{{ strategyBindingCount(record.id) === subscriptions.length && subscriptions.length ? '全部订阅' : strategyBindingCount(record.id) + ' 只股票' }}</a-tag></template>
                 </a-table-column>
                 <a-table-column title="绑定股票" :width="210">
-                  <template #cell="{ record }"><div class="bound-symbols"><a-tag v-for="item in strategyBindings(record.id).slice(0, 3)" :key="item.id">{{ item.stockName || '未知股票' }} · {{ item.symbol }}</a-tag><span v-if="strategyBindings(record.id).length > 3">+{{ strategyBindings(record.id).length - 3 }}</span><span v-if="!strategyBindings(record.id).length" class="muted-text">未绑定</span></div></template>
+                  <template #cell="{ record }"><div class="bound-symbols"><a-tag v-for="item in strategyBindings(record.id).slice(0, 3)" :key="item.id">{{ item.stockName || '未知股票' }} · <StockLink :market="item.market" :symbol="item.symbol" subtle /></a-tag><span v-if="strategyBindings(record.id).length > 3">+{{ strategyBindings(record.id).length - 3 }}</span><span v-if="!strategyBindings(record.id).length" class="muted-text">未绑定</span></div></template>
                 </a-table-column>
                 <a-table-column title="执行间隔" :width="105">
                   <template #cell="{ record }"><span v-if="strategyBindings(record.id)[0]">{{ strategyBindings(record.id)[0].periodMinutes % 60 === 0 ? strategyBindings(record.id)[0].periodMinutes / 60 + ' 小时' : strategyBindings(record.id)[0].periodMinutes + ' 分钟' }}</span><span v-else>-</span></template>
@@ -2659,7 +2767,11 @@ const app = createApp({
         </section>
 
         <section v-if="activeModule === 'backtest-strategies'" class="module-panel">
-          <BacktestStrategyManager :strategies="strategies" :subscriptions="subscriptions" :request="api" :pct="pct" @refresh-strategies="loadStrategies" />
+          <BacktestStrategyManager module-mode="strategies" :strategies="strategies" :subscriptions="subscriptions" :request="api" :pct="pct" @refresh-strategies="loadStrategies" />
+        </section>
+
+        <section v-if="activeModule === 'backtest-datasets'" class="module-panel">
+          <BacktestStrategyManager module-mode="datasets" :strategies="strategies" :subscriptions="subscriptions" :request="api" :pct="pct" @refresh-strategies="loadStrategies" @open-backtest="navigateModule('backtest-strategies')" />
         </section>
 
         <section v-if="activeModule === 'pi-projects'" class="module-panel project-management">
@@ -2717,14 +2829,18 @@ const app = createApp({
                 <small>项目</small>
                 <div v-for="project in activeProjects" :key="project.id" class="project-tree-group">
                   <div class="project-tree-row" :class="{ active: project.id === activeProjectId }">
-                    <button class="project-folder" type="button" @click="toggleProjectFolder(project.id)"><span>{{ isProjectExpanded(project.id) ? '⌄' : '›' }}</span><span>▱</span></button>
+                    <button class="project-folder" type="button" :aria-expanded="isProjectExpanded(project.id)" @click="toggleProjectFolder(project.id)"><span class="tree-chevron" :class="{ expanded: isProjectExpanded(project.id) }"></span><span class="tree-folder-icon" aria-hidden="true"></span></button>
                     <button class="project-name" type="button" @click="selectProject(project.id)">{{ project.name }}</button>
                     <button class="project-add" type="button" title="在项目中新建任务" @click="newChatInProject(project.id)">＋</button>
                   </div>
                   <div v-if="isProjectExpanded(project.id)" class="project-conversations">
                     <div class="project-task-row" :class="{ active: activeModule === 'pi-tasks' && activeProjectId === project.id }">
-                      <button type="button" class="project-submodule" @click="openProjectTasks(project)"><span>◇</span><span>定时任务</span><b>{{ projectTaskCount(project.id) }}</b></button>
+                      <button type="button" class="project-submodule" :aria-expanded="areProjectTasksExpanded(project.id)" @click="toggleProjectTasks(project.id)"><span class="tree-chevron" :class="{ expanded: areProjectTasksExpanded(project.id) }"></span><span class="task-clock-icon" aria-hidden="true"></span><span>定时任务</span><b>{{ projectTaskCount(project.id) }}</b></button>
                       <button type="button" class="project-task-add" title="新建定时任务" aria-label="新建定时任务" @click.stop="openTaskCreator(project)">＋</button>
+                    </div>
+                    <div v-if="areProjectTasksExpanded(project.id)" class="scheduled-task-list">
+                      <button v-for="task in projectTasks(project.id)" :key="task.id" type="button" class="scheduled-task-item" @click="openScheduledTask(project, task)"><span class="scheduled-task-dot"></span><span>{{ task.name }}</span></button>
+                      <p v-if="!projectTaskCount(project.id)" class="scheduled-task-empty">暂无定时任务</p>
                     </div>
                     <div v-for="entry in chatHistoryForProject(project.id)" :key="entry.id" class="conversation-row" :class="{ active: entry.id === chatSessionId }"><button type="button" @click="openChatHistory(entry)"><span></span><span><strong>{{ entry.title }}</strong><small>{{ formatChatTime(entry.updatedAt) }}</small></span></button><a-dropdown trigger="click"><button class="conversation-more" type="button" aria-label="任务操作" @click.stop>···</button><template #content><a-doption @click="renameChat(entry)">重命名</a-doption><a-doption @click="setChatArchived(entry, true)">归档</a-doption></template></a-dropdown></div>
                     <p v-if="!chatHistoryForProject(project.id).length">暂无任务</p>
@@ -2732,7 +2848,7 @@ const app = createApp({
                 </div>
                 <div class="project-tree-group personal-group">
                   <div class="project-tree-row" :class="{ active: activeProjectId === null }">
-                    <button class="project-folder" type="button" @click="toggleProjectFolder(null)"><span>{{ isProjectExpanded(null) ? '⌄' : '›' }}</span><span>▱</span></button>
+                    <button class="project-folder" type="button" :aria-expanded="isProjectExpanded(null)" @click="toggleProjectFolder(null)"><span class="tree-chevron" :class="{ expanded: isProjectExpanded(null) }"></span><span class="tree-folder-icon" aria-hidden="true"></span></button>
                     <button class="project-name" type="button" @click="selectProject(null)">任务</button>
                     <button class="project-add" type="button" title="新建个人任务" @click="newChatInProject(null)">＋</button>
                   </div>
@@ -2780,7 +2896,7 @@ const app = createApp({
                       <div class="trace-section"><strong>Tools</strong><div v-if="messageTrace(item).tools?.length"><pre v-for="(tool, toolIndex) in messageTrace(item).tools" :key="toolIndex">{{ JSON.stringify(tool, null, 2) }}</pre></div><em v-else>本轮 Runtime 未调用工具</em></div>
                     </details>
                     <template v-for="(part, partIndex) in messageParts(item.content)" :key="partIndex">
-                      <div v-if="part.type === 'markdown'" class="markdown-body" v-html="part.html"></div>
+                      <div v-if="part.type === 'markdown'" class="markdown-body" v-html="part.html" @click="handleMarkdownLink"></div>
                       <div v-else class="plugin-render">
                         <strong>{{ part.plugin.title }}</strong>
                         <table v-if="part.plugin.kind === 'table' && Array.isArray(part.plugin.data?.rows)">
@@ -3129,6 +3245,24 @@ const app = createApp({
               <a-button type="primary" long :loading="settingsSaving" @click="saveDataSourceSettings">保存路由配置</a-button>
             </a-form>
           </a-drawer>
+        </section>
+
+        <section v-if="activeModule === 'im-connectors'" class="module-panel im-connectors-page">
+          <div class="panel-head"><div><h2>IM 连接器</h2><p>让 AlphaDock 的 AI 助手在授权范围内连接企业即时通讯平台。</p></div><a-button type="primary" :loading="settingsSaving" @click="saveImConnector">保存配置</a-button></div>
+          <div class="connector-layout">
+            <a-card class="connector-card">
+              <div class="connector-title"><span class="connector-logo">飞</span><div><h3>飞书 / Lark</h3><p>官方 lark-cli · 消息、群聊、文档、日历、任务与知识库</p></div><a-switch v-model="imConnector.enabled" /></div>
+              <a-form :model="imConnector" layout="vertical">
+                <div class="form-row"><a-form-item label="服务区域"><a-radio-group v-model="imConnector.brand" type="button"><a-radio value="feishu">飞书（中国）</a-radio><a-radio value="lark">Lark（国际）</a-radio></a-radio-group></a-form-item><a-form-item label="App ID"><a-input v-model="imConnector.appId" placeholder="cli_xxxxxxxxxxxxxxxx" /></a-form-item></div>
+                <a-form-item label="App Secret" :extra="imConnector.hasAppSecret ? '凭据已加密保存；留空表示继续使用现有 Secret。' : '凭据将加密保存在本机，保存后不再回显。'"><a-input-password v-model="imConnector.appSecret" placeholder="请输入飞书应用 App Secret" allow-clear /></a-form-item>
+                <a-form-item label="Agent 权限"><a-switch v-model="imConnector.allowWrite" /><span class="permission-copy">允许 AI 助手发送消息及修改飞书内容；关闭时仅允许读取。</span></a-form-item>
+              </a-form>
+              <a-alert :type="imConnectorStatus?.ok ? 'success' : 'warning'" :show-icon="true"><template #title>{{ imConnectorStatus?.ok ? '连接正常' : '尚未完成授权' }}</template>{{ imConnectorStatus?.message || '保存应用凭据后检查认证状态。' }}</a-alert>
+              <div class="connector-actions"><a-button type="primary" :disabled="!imConnector.enabled || !imConnector.hasAppSecret" :loading="imConnectorAuthorizing" @click="authorizeImConnector">开始飞书授权</a-button><a-button :loading="imConnectorTesting" @click="testImConnector">检查连接</a-button><span class="hint dark">系统会自动使用当前 AlphaDock 账号，无需填写用户 ID。<template v-if="imConnectorStatus?.profile">连接身份：{{ imConnectorStatus.profile }}</template></span></div>
+            </a-card>
+            <a-card title="Agent 系统能力" class="connector-capabilities"><a-tag color="arcoblue">lark-im</a-tag><a-tag>lark-doc</a-tag><a-tag>lark-calendar</a-tag><a-tag>lark-task</a-tag><a-tag>lark-sheets</a-tag><a-tag>lark-wiki</a-tag><p>pi-agent 已接入官方 lark-cli 系统 skill。模型会优先发现命令参数，并遵守只读/写入权限与高风险操作确认规则。</p></a-card>
+          </div>
+          <a-alert v-if="settingsMessage" type="success">{{ settingsMessage }}</a-alert>
         </section>
 
         <section v-if="activeModule === 'display-settings'" class="module-panel display-settings-page">

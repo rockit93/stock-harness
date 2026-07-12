@@ -1,0 +1,9 @@
+{
+  "name": "lark_cli",
+  "version": 1,
+  "description": "Operate Feishu/Lark through the official lark-cli. Pass CLI arguments only. Write operations require connector write permission and explicit user intent.",
+  "risk": "network",
+  "timeoutMs": 120000,
+  "inputSchema": { "type": "object", "properties": { "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments after lark-cli, e.g. ['im','+messages-search','--query','日报']" } }, "required": ["args"], "additionalProperties": false },
+  "handler": "builtin:lark-cli"
+}

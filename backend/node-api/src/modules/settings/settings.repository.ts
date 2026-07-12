@@ -20,6 +20,17 @@ export type DisplaySettings = {
   updatedAt: string | null;
 };
 
+export type ImConnectorSettings = {
+  provider: "feishu";
+  enabled: boolean;
+  brand: "feishu" | "lark";
+  appId: string;
+  appSecret?: string;
+  hasAppSecret: boolean;
+  allowWrite: boolean;
+  updatedAt: string | null;
+};
+
 export type ModelSettings = {
   id: number;
   name: string;
@@ -142,6 +153,12 @@ export class SettingsRepository {
         markets_json TEXT NOT NULL, capabilities_json TEXT NOT NULL, adapter_script TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL, UNIQUE(user_id, source_key)
       );
+      CREATE TABLE IF NOT EXISTS user_im_connectors (
+        user_id INTEGER NOT NULL, provider TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
+        brand TEXT NOT NULL DEFAULT 'feishu', app_id TEXT NOT NULL DEFAULT '', app_secret_ciphertext TEXT,
+        allow_write INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, provider)
+      );
     `);
     const columns = this.db.prepare("PRAGMA table_info(user_settings)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "provider_chains")) {
@@ -189,6 +206,33 @@ export class SettingsRepository {
     const decipher = createDecipheriv("aes-256-gcm", this.credentialKey, Buffer.from(iv, "base64url"));
     decipher.setAuthTag(Buffer.from(tag, "base64url"));
     return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
+  }
+
+  getImConnector(userId: number): ImConnectorSettings {
+    const row = this.db.prepare("SELECT * FROM user_im_connectors WHERE user_id = ? AND provider = 'feishu'").get(userId) as any;
+    return { provider: "feishu", enabled: Boolean(row?.enabled), brand: row?.brand === "lark" ? "lark" : "feishu", appId: String(row?.app_id || ""), hasAppSecret: Boolean(row?.app_secret_ciphertext), allowWrite: Boolean(row?.allow_write), updatedAt: row?.updated_at ?? null };
+  }
+
+  saveImConnector(userId: number, body: Partial<ImConnectorSettings>): ImConnectorSettings {
+    const current = this.getImConnector(userId);
+    const existing = this.db.prepare("SELECT app_secret_ciphertext FROM user_im_connectors WHERE user_id = ? AND provider = 'feishu'").get(userId) as any;
+    const submittedSecret = String(body.appSecret || "").trim();
+    const secret = submittedSecret ? this.encryptApiKey(submittedSecret) : existing?.app_secret_ciphertext ?? null;
+    const enabled = body.enabled ?? current.enabled;
+    const appId = String(body.appId ?? current.appId).trim();
+    if (enabled && (!appId || !secret)) throw new BadRequestException("启用飞书连接器前请填写 App ID 和 App Secret");
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`INSERT INTO user_im_connectors (user_id, provider, enabled, brand, app_id, app_secret_ciphertext, allow_write, updated_at)
+      VALUES (?, 'feishu', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, provider) DO UPDATE SET enabled=excluded.enabled, brand=excluded.brand, app_id=excluded.app_id,
+      app_secret_ciphertext=excluded.app_secret_ciphertext, allow_write=excluded.allow_write, updated_at=excluded.updated_at`)
+      .run(userId, enabled ? 1 : 0, body.brand === "lark" ? "lark" : "feishu", appId, secret, body.allowWrite ? 1 : 0, updatedAt);
+    return this.getImConnector(userId);
+  }
+
+  getImConnectorSecret(userId: number) {
+    const row = this.db.prepare("SELECT app_secret_ciphertext FROM user_im_connectors WHERE user_id = ? AND provider = 'feishu'").get(userId) as any;
+    return row?.app_secret_ciphertext ? this.decryptApiKey(row.app_secret_ciphertext) : "";
   }
 
   getDisplay(userId: number): DisplaySettings {

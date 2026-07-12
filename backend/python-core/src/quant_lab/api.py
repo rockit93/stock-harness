@@ -67,6 +67,7 @@ class BacktestRequest(BarsRequest):
     cash: float = 100000.0
     commission_bps: float = 3.0
     strategy_definition: dict[str, Any] | None = None
+    dataset_bars: list[dict[str, Any]] | None = None
 
 
 class StrategyValidationRequest(BaseModel):
@@ -237,18 +238,24 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
         params.update(request.strategy_params)
 
     try:
-        frame = load_daily_bars(
-            market=request.market,
-            symbol=request.symbol,
-            start=request.start,
-            end=request.end,
-            adjust="" if request.adjust == "none" else request.adjust,
-            data_source=request.data_source,
-            futu_host=request.futu_host,
-            futu_port=request.futu_port,
-            interval=request.interval,
-            provider_chains=request.provider_chains,
-            tushare_token=request.tushare_token,
+        frame = (
+            pd.DataFrame(request.dataset_bars)
+            .assign(date=lambda value: pd.to_datetime(value["date"]))
+            .set_index("date")
+            if request.dataset_bars
+            else load_daily_bars(
+                market=request.market,
+                symbol=request.symbol,
+                start=request.start,
+                end=request.end,
+                adjust="" if request.adjust == "none" else request.adjust,
+                data_source=request.data_source,
+                futu_host=request.futu_host,
+                futu_port=request.futu_port,
+                interval=request.interval,
+                provider_chains=request.provider_chains,
+                tushare_token=request.tushare_token,
+            )
         )
         result = run_backtest(
             bars=frame,

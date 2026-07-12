@@ -1,11 +1,14 @@
 import { BadGatewayException, Body, Controller, Delete, ForbiddenException, Get, Inject, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
-import { SettingsRepository, DataSourceSettings, DisplaySettings, HttpDataSource, ModelSettings } from "./settings.repository";
+import { SettingsRepository, DataSourceSettings, DisplaySettings, HttpDataSource, ImConnectorSettings, ModelSettings } from "./settings.repository";
 import { createHmac } from "node:crypto";
+import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import path from "node:path";
 
 @UseGuards(AuthGuard)
 @Controller("settings")
 export class SettingsController {
+  private readonly larkAuthProcesses = new Map<number, ChildProcessWithoutNullStreams>();
   constructor(@Inject(SettingsRepository) private readonly settings: SettingsRepository) {}
 
   @Get("data-source")
@@ -77,6 +80,70 @@ export class SettingsController {
   @Put("display")
   saveDisplay(@Req() req: AuthenticatedRequest, @Body() body: Partial<DisplaySettings>) {
     return this.settings.saveDisplay(Number(req.user.sub), body);
+  }
+
+  @Get("im-connectors/feishu")
+  getFeishuConnector(@Req() req: AuthenticatedRequest) { return this.settings.getImConnector(Number(req.user.sub)); }
+
+  @Put("im-connectors/feishu")
+  async saveFeishuConnector(@Req() req: AuthenticatedRequest, @Body() body: Partial<ImConnectorSettings>) {
+    const userId = Number(req.user.sub);
+    const saved = this.settings.saveImConnector(userId, body);
+    if (saved.appId && saved.hasAppSecret) await this.runLarkCli(["config", "init", "--name", `alphadock-${userId}`, "--app-id", saved.appId, "--app-secret-stdin", "--brand", saved.brand], this.settings.getImConnectorSecret(userId));
+    return saved;
+  }
+
+  @Get("im-connectors/feishu/status")
+  async getFeishuStatus(@Req() req: AuthenticatedRequest) {
+    const userId = Number(req.user.sub);
+    const config = this.settings.getImConnector(userId);
+    if (!config.enabled) return { ok: false, configured: config.hasAppSecret, message: "连接器未启用" };
+    const result = await this.runLarkCli(["auth", "status", "--profile", `alphadock-${userId}`]);
+    let detail: any = {}; try { detail = JSON.parse(result.stdout || "{}"); } catch { detail = {}; }
+    return { ok: result.exitCode === 0 && detail.ok !== false, configured: true, authenticated: detail.ok === true, profile: `alphadock-${userId}`, message: detail.ok === true ? "飞书 CLI 已认证" : (detail.error?.message || result.stderr || "等待飞书授权"), detail };
+  }
+
+  @Post("im-connectors/feishu/authorize")
+  async authorizeFeishu(@Req() req: AuthenticatedRequest) {
+    const userId = Number(req.user.sub);
+    const config = this.settings.getImConnector(userId);
+    if (!config.enabled || !config.hasAppSecret) throw new BadGatewayException("请先填写应用凭据、启用连接器并保存");
+    this.larkAuthProcesses.get(userId)?.kill();
+    const child = this.spawnLarkCli(["auth", "login", "--recommend", "--profile", `alphadock-${userId}`]);
+    this.larkAuthProcesses.set(userId, child);
+    child.once("close", () => { if (this.larkAuthProcesses.get(userId) === child) this.larkAuthProcesses.delete(userId); });
+    return await new Promise<{ ok: boolean; authorizationUrl: string; message: string }>((resolve, reject) => {
+      let output = "", settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        const match = output.match(/https?:\/\/[^\s"'<>]+/);
+        if (match) { settled = true; clearTimeout(timer); resolve({ ok: true, authorizationUrl: match[0], message: "请在新窗口完成飞书授权" }); }
+        else if (error) { settled = true; clearTimeout(timer); reject(error); }
+      };
+      child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); finish(); });
+      child.stderr.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); finish(); });
+      child.once("error", (error) => finish(error));
+      child.once("close", (code) => finish(new Error(output.trim() || `lark-cli exited with ${code}`)));
+      const timer = setTimeout(() => finish(new Error("获取飞书授权链接超时，请稍后重试")), 15_000);
+    });
+  }
+
+  private runLarkCli(args: string[], stdin = ""): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const child = this.spawnLarkCli(args);
+      let stdout = "", stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+      child.on("error", reject);
+      child.on("close", (exitCode) => resolve({ exitCode, stdout: stdout.slice(0, 100000), stderr: stderr.slice(0, 100000) }));
+      if (stdin) child.stdin.end(stdin); else child.stdin.end();
+    });
+  }
+
+  private spawnLarkCli(args: string[]) {
+    if (process.platform !== "win32") return spawn("lark-cli", args, { shell: false, windowsHide: true });
+    const script = path.join(process.env.APPDATA || "", "npm", "node_modules", "@larksuite", "cli", "scripts", "run.js");
+    return spawn(process.execPath, [script, ...args], { shell: false, windowsHide: true });
   }
 
   @Get("http-data-sources")
