@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Literal
+
+import pandas as pd
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -27,6 +29,8 @@ class BarsRequest(BaseModel):
     futu_host: str = "127.0.0.1"
     futu_port: int = 11111
     interval: BarInterval = BarInterval.DAY
+    range: Literal["day", "week", "month", "halfYear", "year"] | None = None
+    provider_chains: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class SymbolLookupRequest(BaseModel):
@@ -49,6 +53,7 @@ class FundamentalsRequest(BaseModel):
     data_source: DataSource = DataSource.AUTO
     futu_host: str = "127.0.0.1"
     futu_port: int = 11111
+    provider_chains: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class BacktestRequest(BarsRequest):
@@ -88,6 +93,9 @@ def strategies() -> list[dict[str, Any]]:
         {
             "key": key,
             "label": spec.label,
+            "english_label": spec.english_label,
+            "description": spec.description,
+            "rule_summary": spec.rule_summary,
             "default_params": spec.default_params,
         }
         for key, spec in STRATEGIES.items()
@@ -119,11 +127,31 @@ def bars(request: BarsRequest) -> dict[str, Any]:
             futu_host=request.futu_host,
             futu_port=request.futu_port,
             interval=request.interval,
+            provider_chains=request.provider_chains,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return {"bars": _frame_payload(frame)}
+    provider = frame.attrs.get("provider", "unknown")
+    if request.range and not frame.empty:
+        last_trading_day = frame.index.max().normalize()
+        if request.range == "day":
+            range_start = last_trading_day
+        else:
+            offset = {
+                "week": pd.DateOffset(weeks=1),
+                "month": pd.DateOffset(months=1),
+                "halfYear": pd.DateOffset(months=6),
+                "year": pd.DateOffset(years=1),
+            }[request.range]
+            range_start = last_trading_day - offset
+        frame = frame.loc[(frame.index >= range_start) & (frame.index <= last_trading_day)]
+
+    return {
+        "bars": _frame_payload(frame),
+        "source": provider,
+        "last_trading_day": frame.index.max().date().isoformat() if not frame.empty else None,
+    }
 
 
 @app.post("/symbols/lookup")
@@ -153,6 +181,7 @@ def fundamentals(request: FundamentalsRequest) -> dict[str, Any]:
             data_source=request.data_source,
             futu_host=request.futu_host,
             futu_port=request.futu_port,
+            provider_chains=request.provider_chains,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -178,7 +207,15 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
             definition = validate_strategy_definition(request.strategy_definition)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        spec = StrategySpec(request.strategy, request.strategy, JsonRuleStrategy, {})
+        spec = StrategySpec(
+            key=request.strategy,
+            label=request.strategy,
+            english_label=request.strategy,
+            description="用户自定义 JSON 回测策略",
+            rule_summary="按用户配置的 JSON 规则执行。",
+            strategy_cls=JsonRuleStrategy,
+            default_params={},
+        )
         params = {"definition": definition}
     elif not spec:
         raise HTTPException(status_code=400, detail=f"unknown strategy: {request.strategy}")
@@ -196,6 +233,7 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
             futu_host=request.futu_host,
             futu_port=request.futu_port,
             interval=request.interval,
+            provider_chains=request.provider_chains,
         )
         result = run_backtest(
             bars=frame,
@@ -214,4 +252,5 @@ def backtest(request: BacktestRequest) -> dict[str, Any]:
         "drawdown": _series_payload(result.drawdown),
         "bars": _frame_payload(frame),
         "trades": result.trades.to_dict(orient="records"),
+        "orders": result.orders.to_dict(orient="records"),
     }

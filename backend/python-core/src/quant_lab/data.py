@@ -27,6 +27,8 @@ class BarInterval(str, Enum):
     HOUR_1 = "1h"
     HOUR_4 = "4h"
     DAY = "1d"
+    WEEK = "1w"
+    MONTH = "1mo"
 
 
 _BAR_CACHE_MAX_ENTRIES = 256
@@ -37,6 +39,8 @@ _BAR_CACHE_TTL_SECONDS = {
     BarInterval.HOUR_1: 180,
     BarInterval.HOUR_4: 300,
     BarInterval.DAY: 900,
+    BarInterval.WEEK: 1800,
+    BarInterval.MONTH: 3600,
 }
 _bar_cache: OrderedDict[tuple, tuple[float, pd.DataFrame]] = OrderedDict()
 _bar_cache_locks: dict[tuple, Lock] = {}
@@ -53,6 +57,7 @@ def _bar_cache_key(
     futu_host: str,
     futu_port: int,
     interval: BarInterval,
+    provider_chains: dict[str, list[str]] | None,
 ) -> tuple:
     return (
         market.value,
@@ -64,6 +69,7 @@ def _bar_cache_key(
         futu_host.strip().lower() if data_source == DataSource.FUTU else "",
         futu_port if data_source == DataSource.FUTU else 0,
         interval.value,
+        tuple(_provider_chain(market, provider_chains)),
     )
 
 
@@ -192,6 +198,42 @@ def _load_yfinance(ticker: str, start: date, end: date) -> pd.DataFrame:
     return _normalize_ohlcv(raw)
 
 
+def _load_baostock(symbol: str, start: date, end: date, adjust: str) -> pd.DataFrame:
+    try:
+        import baostock as bs
+    except ImportError as exc:
+        raise RuntimeError("未安装 baostock，请运行 pip install baostock 后重试。") from exc
+
+    clean = normalize_symbol(Market.A_SHARE, symbol)
+    code = f"sh.{clean}" if clean.startswith(("5", "6", "9")) else f"sz.{clean}"
+    adjust_flag = {"qfq": "2", "hfq": "1", "": "3", "none": "3"}.get(adjust, "3")
+    login = bs.login()
+    if login.error_code != "0":
+        raise RuntimeError(f"BaoStock 登录失败: {login.error_msg}")
+    try:
+        result = bs.query_history_k_data_plus(
+            code,
+            "date,open,high,low,close,volume,amount",
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+            frequency="d",
+            adjustflag=adjust_flag,
+        )
+        if result.error_code != "0":
+            raise RuntimeError(f"BaoStock 返回错误: {result.error_msg}")
+        rows = []
+        while result.next():
+            rows.append(result.get_row_data())
+    finally:
+        bs.logout()
+
+    raw = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume", "amount"])
+    if raw.empty:
+        raise RuntimeError(f"BaoStock 未返回 {code} 的行情数据。")
+    raw["date"] = pd.to_datetime(raw["date"])
+    return _normalize_ohlcv(raw.set_index("date"))
+
+
 def normalize_symbol(market: Market, symbol: str) -> str:
     clean = symbol.upper().strip()
     if market == Market.A_SHARE:
@@ -264,6 +306,8 @@ def _load_futu_bars(
         BarInterval.HOUR_1: KLType.K_60M,
         BarInterval.HOUR_4: KLType.K_240M,
         BarInterval.DAY: KLType.K_DAY,
+        BarInterval.WEEK: KLType.K_WEEK,
+        BarInterval.MONTH: KLType.K_MON,
     }[interval]
     quote_ctx = OpenQuoteContext(host=host, port=port)
     code = _futu_code(market, symbol)
@@ -336,6 +380,78 @@ def _load_auto_daily(market: Market, symbol: str, start: date, end: date, adjust
     )
 
 
+DEFAULT_PROVIDER_CHAINS: dict[Market, list[str]] = {
+    Market.A_SHARE: ["akshare", "baostock", "yfinance"],
+    Market.HK: ["futu", "akshare", "yfinance"],
+    Market.US: ["futu", "yfinance", "akshare"],
+}
+
+SUPPORTED_BAR_PROVIDERS: dict[Market, set[str]] = {
+    Market.A_SHARE: {"akshare", "baostock", "futu", "yfinance"},
+    Market.HK: {"akshare", "futu", "yfinance"},
+    Market.US: {"akshare", "futu", "yfinance"},
+}
+
+
+def _provider_chain(market: Market, provider_chains: dict[str, list[str]] | None) -> list[str]:
+    configured = (provider_chains or {}).get(market.value, [])
+    allowed = SUPPORTED_BAR_PROVIDERS[market]
+    chain = [str(item).lower() for item in configured if str(item).lower() in allowed]
+    return list(dict.fromkeys(chain)) or DEFAULT_PROVIDER_CHAINS[market]
+
+
+def _load_provider_bars(provider: str, market: Market, symbol: str, start: date, end: date,
+    adjust: str, host: str, port: int, interval: BarInterval) -> pd.DataFrame:
+    if provider == "futu":
+        source_interval = BarInterval.DAY if interval in (BarInterval.WEEK, BarInterval.MONTH) else interval
+        return _load_futu_bars(market, symbol, start, end, adjust, host, port, source_interval)
+    if interval not in (BarInterval.DAY, BarInterval.WEEK, BarInterval.MONTH):
+        raise RuntimeError(f"{provider} 当前只支持日线。")
+    if provider == "baostock" and market == Market.A_SHARE:
+        return _load_baostock(symbol, start, end, adjust)
+    if provider == "akshare":
+        if market == Market.A_SHARE:
+            return _load_a_share(symbol, start, end, adjust)
+        if market == Market.HK:
+            return _load_ak_hk_daily(symbol, start, end, adjust)
+        return _load_ak_us_daily(symbol, start, end, adjust)
+    if provider == "yfinance":
+        ticker = (_a_share_yahoo_ticker(symbol) if market == Market.A_SHARE else
+                  _hk_ticker(symbol) if market == Market.HK else normalize_symbol(market, symbol))
+        return _load_yfinance(ticker, start, end)
+    raise RuntimeError(f"数据源 {provider} 不支持 {market.value} 行情。")
+
+
+def _load_from_chain(market: Market, symbol: str, start: date, end: date, adjust: str,
+                     host: str, port: int, interval: BarInterval, providers: list[str]) -> pd.DataFrame:
+    errors = []
+    for provider in providers:
+        try:
+            frame = _load_provider_bars(provider, market, symbol, start, end, adjust, host, port, interval)
+            if interval in (BarInterval.WEEK, BarInterval.MONTH):
+                rule = "W-FRI" if interval == BarInterval.WEEK else "ME"
+                frame = frame.copy()
+                frame["_bar_date"] = frame.index
+                aggregations = {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                    "_bar_date": "last",
+                }
+                if "amount" in frame.columns:
+                    aggregations["amount"] = "sum"
+                frame = frame.resample(rule).agg(aggregations).dropna(subset=["open", "high", "low", "close"])
+                frame = frame.set_index("_bar_date")
+                frame.index.name = "date"
+            frame.attrs["provider"] = provider
+            return frame
+        except Exception as exc:
+            errors.append(f"{provider}: {exc}")
+    raise RuntimeError(f"{market.value} 主备数据源全部不可用: {' | '.join(errors)}")
+
+
 def load_daily_bars(
     market: Market,
     symbol: str,
@@ -346,9 +462,10 @@ def load_daily_bars(
     futu_host: str = "127.0.0.1",
     futu_port: int = 11111,
     interval: BarInterval = BarInterval.DAY,
+    provider_chains: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
     key = _bar_cache_key(
-        market, symbol, start, end, adjust, data_source, futu_host, futu_port, interval
+        market, symbol, start, end, adjust, data_source, futu_host, futu_port, interval, provider_chains
     )
     cached = _get_cached_bars(key)
     if cached is not None:
@@ -360,6 +477,13 @@ def load_daily_bars(
         cached = _get_cached_bars(key)
         if cached is not None:
             return cached
+
+        providers = ["futu"] if data_source == DataSource.FUTU else _provider_chain(market, provider_chains)
+        frame = _load_from_chain(
+            market, symbol, start, end, adjust, futu_host, futu_port, interval, providers
+        )
+        _put_cached_bars(key, frame, interval)
+        return frame.copy()
 
         if data_source == DataSource.FUTU:
             frame = _load_futu_bars(

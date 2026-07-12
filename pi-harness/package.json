@@ -7,6 +7,10 @@
   "pi": {
     "runtime": "stock-harness-pi",
     "version": 1,
+    "tools": [
+      "tools/system-command/tool.json",
+      "tools/web-fetch/tool.json"
+    ],
     "roles": [
       "roles/market-observer.json",
       "roles/strategy-researcher.json",
@@ -16,7 +20,7 @@
     ],
     "skills": [
       "skills/quant-research/SKILL.md",
-      "skills/futu-data-source/SKILL.md"
+      "skills/data-source/SKILL.md"
     ],
     "plugins": [
       "plugins/market-summary/plugin.json"

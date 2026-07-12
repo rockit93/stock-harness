@@ -7,10 +7,12 @@ export class PiRuntimeProvider extends BaseProvider {
     const userMessage = [...messages].reverse().find((item) => item.role === "user")?.content ?? "";
     return {
       sessionId: options.sessionId ?? null,
+      projectId: options.projectId ?? null,
       roleId: options.roleId ?? null,
       model: options.model ?? this.config.model ?? null,
       modelConfigId: options.modelConfigId ?? null,
       message: userMessage,
+      attachments: Array.isArray(options.attachments) ? options.attachments : [],
     };
   }
 

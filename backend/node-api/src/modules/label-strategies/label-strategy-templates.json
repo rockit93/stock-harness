@@ -1,0 +1,6 @@
+[
+  {"key":"good-cash-compounder","name":"高 ROE 现金牛","targetLabel":"好公司","description":"盈利质量较稳，ROE 较高且经营现金流为正。","conditions":[{"metric":"roe","op":">=","value":0.15},{"metric":"operating_cash_flow","op":">","value":0},{"metric":"net_income","op":">","value":0}]},
+  {"key":"expensive-quality","name":"高估值优质股","targetLabel":"贵公司","description":"质量不错，但 PE 已经不便宜，需要更高增长消化估值。","conditions":[{"metric":"roe","op":">=","value":0.15},{"metric":"pe","op":">=","value":40},{"metric":"net_income","op":">","value":0}]},
+  {"key":"danger-balance-sheet","name":"高负债现金流压力","targetLabel":"危险公司","description":"负债率偏高，并且经营现金流表现不佳。","conditions":[{"metric":"debt_ratio","op":">=","value":0.7},{"metric":"operating_cash_flow","op":"<=","value":0}]},
+  {"key":"cheap-with-caveat","name":"低 PE 质量存疑","targetLabel":"便宜但有坑的公司","description":"PE 很低但 ROE 偏弱，可能是价值陷阱，需要进一步排雷。","conditions":[{"metric":"pe","op":"<=","value":12},{"metric":"roe","op":"<","value":0.1}]}
+]

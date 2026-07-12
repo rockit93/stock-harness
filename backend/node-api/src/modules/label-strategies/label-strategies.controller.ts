@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
 import { BindingBody, StrategyBody } from "./label-strategies.repository";
 import { LabelStrategiesService } from "./label-strategies.service";
@@ -21,6 +21,11 @@ export class LabelStrategiesController {
   @Post()
   createStrategy(@Req() req: AuthenticatedRequest, @Body() body: StrategyBody) {
     return this.service.createStrategy(Number(req.user.sub), body);
+  }
+
+  @Patch(":id")
+  updateStrategy(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: StrategyBody) {
+    return this.service.updateStrategy(Number(req.user.sub), Number(id), body);
   }
 
   @Post("templates/:key/copy")

@@ -1,0 +1,1108 @@
+:root,
+html[data-theme="midnight"] {
+  color-scheme: dark;
+  --app-bg: #07110f;
+  --app-canvas: #091512;
+  --app-surface: #0d1b17;
+  --app-surface-raised: #11231e;
+  --app-surface-soft: #132721;
+  --app-header: rgba(8, 20, 17, .94);
+  --app-sidebar: #091612;
+  --app-border: rgba(139, 195, 176, .14);
+  --app-border-strong: rgba(139, 214, 187, .24);
+  --app-text: #c7d8d2;
+  --app-text-strong: #edf7f3;
+  --app-text-secondary: #9bb0a9;
+  --app-text-muted: #61776f;
+  --app-accent: #4fd29f;
+  --app-accent-soft: #8fffc4;
+  --app-accent-bg: rgba(79, 210, 159, .12);
+  --app-hover: rgba(110, 211, 174, .09);
+  --app-shadow: rgba(0, 0, 0, .3);
+  --app-brand-gradient: linear-gradient(135deg, #0b2c23, #14775c);
+  --app-danger-bg: rgba(127, 29, 29, .22);
+  --app-success-bg: rgba(22, 101, 52, .2);
+  --color-bg-1: #0d1b17;
+  --color-bg-2: #11231e;
+  --color-bg-3: #162b25;
+  --color-bg-4: #1a322b;
+  --color-fill-1: rgba(132, 190, 170, .06);
+  --color-fill-2: rgba(132, 190, 170, .1);
+  --color-fill-3: rgba(132, 190, 170, .15);
+  --color-fill-4: rgba(132, 190, 170, .2);
+  --color-text-1: #edf7f3;
+  --color-text-2: #c0d1cb;
+  --color-text-3: #8ba098;
+  --color-text-4: #61776f;
+  --color-border-1: rgba(139, 195, 176, .11);
+  --color-border-2: rgba(139, 195, 176, .16);
+  --color-border-3: rgba(139, 195, 176, .22);
+  --color-border-4: rgba(139, 195, 176, .3);
+  --primary-6: 38, 196, 139;
+}
+
+html[data-theme="obsidian"] {
+  color-scheme: dark;
+  --app-bg: #090d18;
+  --app-canvas: #0b1020;
+  --app-surface: #101728;
+  --app-surface-raised: #151e33;
+  --app-surface-soft: #18233a;
+  --app-header: rgba(11, 16, 31, .94);
+  --app-sidebar: #0c1221;
+  --app-border: rgba(143, 162, 211, .15);
+  --app-border-strong: rgba(143, 168, 235, .25);
+  --app-text: #cbd4e8;
+  --app-text-strong: #f1f4fb;
+  --app-text-secondary: #a4afc9;
+  --app-text-muted: #68748e;
+  --app-accent: #6d8cff;
+  --app-accent-soft: #a9baff;
+  --app-accent-bg: rgba(109, 140, 255, .13);
+  --app-hover: rgba(109, 140, 255, .1);
+  --app-shadow: rgba(0, 0, 0, .34);
+  --app-brand-gradient: linear-gradient(135deg, #17234a, #405fc5);
+  --app-danger-bg: rgba(127, 29, 29, .22);
+  --app-success-bg: rgba(30, 96, 101, .22);
+  --color-bg-1: #101728;
+  --color-bg-2: #151e33;
+  --color-bg-3: #1a2540;
+  --color-bg-4: #202c49;
+  --color-fill-1: rgba(142, 160, 211, .06);
+  --color-fill-2: rgba(142, 160, 211, .1);
+  --color-fill-3: rgba(142, 160, 211, .15);
+  --color-fill-4: rgba(142, 160, 211, .2);
+  --color-text-1: #f1f4fb;
+  --color-text-2: #cbd4e8;
+  --color-text-3: #98a5c1;
+  --color-text-4: #68748e;
+  --color-border-1: rgba(143, 162, 211, .11);
+  --color-border-2: rgba(143, 162, 211, .16);
+  --color-border-3: rgba(143, 162, 211, .23);
+  --color-border-4: rgba(143, 162, 211, .31);
+  --primary-6: 91, 122, 238;
+}
+
+html[data-theme="daylight"] {
+  color-scheme: light;
+  --app-bg: #eef3f1;
+  --app-canvas: #f5f8f7;
+  --app-surface: #ffffff;
+  --app-surface-raised: #ffffff;
+  --app-surface-soft: #f0f5f3;
+  --app-header: rgba(255, 255, 255, .94);
+  --app-sidebar: #fbfdfc;
+  --app-border: #dce6e2;
+  --app-border-strong: #c7d8d1;
+  --app-text: #344a42;
+  --app-text-strong: #10231d;
+  --app-text-secondary: #4f665d;
+  --app-text-muted: #81948d;
+  --app-accent: #168565;
+  --app-accent-soft: #0f6b50;
+  --app-accent-bg: #e4f4ee;
+  --app-hover: #edf5f2;
+  --app-shadow: rgba(23, 57, 46, .07);
+  --app-brand-gradient: linear-gradient(135deg, #0c3a2e, #168565);
+  --app-danger-bg: #fff1f2;
+  --app-success-bg: #edf9f3;
+  --primary-6: 22, 133, 101;
+}
+
+/* Custom application surfaces: keep the full workspace on the selected palette. */
+html[data-theme] body { color: var(--app-text); background: var(--app-bg); }
+html[data-theme] main { background: var(--app-canvas); }
+html[data-theme] header h1,
+html[data-theme] h2,
+html[data-theme] h3,
+html[data-theme] h4,
+html[data-theme] strong { color: var(--app-text-strong); }
+html[data-theme] header p,
+html[data-theme] .hint,
+html[data-theme] small { color: var(--app-text-muted); }
+
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .panel, .metric, .chart-card, .subscription-card, .role-card,
+  .settings-form, .source-panel, .strategy-column, .strategy-card, .result-card,
+  .backtest-form, .backtest-results, .project-card, .project-table-card,
+  .codex-chat, .artifact-workspace, .codex-chat-top, .codex-composer,
+  .starter-card, .thinking-panel, .execution-panel, .plugin-render,
+  .skill-file-preview, .skill-preview-source, .skill-file-tree,
+  .project-detail-summary > div, .arco-card
+) { border-color: var(--app-border) !important; background: var(--app-surface) !important; color: var(--app-text) !important; box-shadow: 0 8px 28px var(--app-shadow); }
+
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .dashboard-view-toolbar, .chat-history-sidebar, .artifact-list-panel,
+  .workspace-toolbar, .workspace-head, .source-panel, .condition-row,
+  .project-table th, .project-check-item, .project-meta span, .trace-section,
+  .execution-content, .markdown-body code, .markdown-body pre,
+  .scope-selector, .task-drawer-project, .skill-references
+) { border-color: var(--app-border) !important; background: var(--app-surface-soft) !important; color: var(--app-text-secondary) !important; }
+
+html[data-theme]:not([data-theme="daylight"]) :is(
+  input:not([type="checkbox"]), select, textarea, .artifact-editor,
+  .project-switcher select, .composer-command-menu, .command-menu-list button
+) { border-color: var(--app-border-strong) !important; background: var(--app-surface-raised) !important; color: var(--app-text-strong) !important; }
+
+html[data-theme]:not([data-theme="daylight"]) :is(
+  p, label, dt, dd, .markdown-body, .message-body, .chat-session-line,
+  .project-meta, .rule-condition-text, .muted-text
+) { color: var(--app-text-secondary); }
+
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .codex-thread, .openwebui-shell, .chat-content-layout
+) { background: var(--app-canvas) !important; }
+
+html[data-theme]:not([data-theme="daylight"]) :is(
+  button.ghost, .role-chip, .stock-chip, .label-chip, .count-badge,
+  .readonly-badge, .project-count-tags span, .detail-tag
+) { border-color: var(--app-border) !important; background: var(--app-accent-bg) !important; color: var(--app-accent-soft) !important; }
+
+html[data-theme]:not([data-theme="daylight"]) .error { background: var(--app-danger-bg); color: #fca5a5; }
+html[data-theme]:not([data-theme="daylight"]) .success { background: var(--app-success-bg); color: #86efac; }
+html[data-theme]:not([data-theme="daylight"]) .arco-table,
+html[data-theme]:not([data-theme="daylight"]) .arco-table-td,
+html[data-theme]:not([data-theme="daylight"]) .arco-table-th { border-color: var(--app-border) !important; background: var(--app-surface) !important; color: var(--app-text) !important; }
+
+/* AI workspace needs stricter contrast than the generic cards. */
+html[data-theme]:not([data-theme="daylight"]) .openwebui-shell {
+  border-color: var(--app-border) !important;
+  background: var(--app-canvas) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .chat-history-sidebar {
+  border-color: var(--app-border) !important;
+  background: var(--app-sidebar) !important;
+  color: var(--app-text) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-brand strong,
+html[data-theme]:not([data-theme="daylight"]) .project-switcher,
+html[data-theme]:not([data-theme="daylight"]) .artifact-list-head {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-logo {
+  background: var(--app-brand-gradient) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-new {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-new:hover {
+  background: var(--app-hover) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-search.arco-input-wrapper,
+html[data-theme]:not([data-theme="daylight"]) .project-switcher select {
+  border: 1px solid var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-search :is(input, .arco-input-prefix, .arco-icon),
+html[data-theme]:not([data-theme="daylight"]) .project-switcher select {
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-section > small,
+html[data-theme]:not([data-theme="daylight"]) .history-section p,
+html[data-theme]:not([data-theme="daylight"]) .artifact-list-empty {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-section button,
+html[data-theme]:not([data-theme="daylight"]) .history-section .project-folder,
+html[data-theme]:not([data-theme="daylight"]) .history-section .project-name,
+html[data-theme]:not([data-theme="daylight"]) .project-conversations .project-submodule {
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-section button:hover,
+html[data-theme]:not([data-theme="daylight"]) .history-section button.active,
+html[data-theme]:not([data-theme="daylight"]) .project-tree-row:hover,
+html[data-theme]:not([data-theme="daylight"]) .project-tree-row.active,
+html[data-theme]:not([data-theme="daylight"]) .project-task-row:hover,
+html[data-theme]:not([data-theme="daylight"]) .project-task-row.active {
+  background: var(--app-hover) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .history-section button.active,
+html[data-theme]:not([data-theme="daylight"]) .project-tree-row.active {
+  box-shadow: inset 2px 0 var(--app-accent);
+}
+html[data-theme]:not([data-theme="daylight"]) .project-conversations,
+html[data-theme]:not([data-theme="daylight"]) .personal-group,
+html[data-theme]:not([data-theme="daylight"]) .artifact-list-panel {
+  border-color: var(--app-border) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .artifact-list-head span {
+  background: var(--app-surface-soft) !important;
+  color: var(--app-text-secondary) !important;
+}
+
+html[data-theme]:not([data-theme="daylight"]) .codex-chat.empty-chat {
+  background: radial-gradient(circle at 50% 46%, var(--app-accent-bg), transparent 36%), var(--app-canvas) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .codex-composer {
+  border: 1px solid var(--app-border-strong) !important;
+  background: var(--app-surface) !important;
+  box-shadow: 0 18px 55px rgba(0, 0, 0, .28) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-chat-composer {
+  border: 1px solid var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-chat-editor {
+  color: var(--app-text-strong) !important;
+  caret-color: var(--app-accent);
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-chat-editor p,
+html[data-theme]:not([data-theme="daylight"]) .rich-chat-editor li {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-chat-editor p.is-editor-empty:first-child::before {
+  color: var(--app-text-muted) !important;
+  opacity: 1;
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-editor-status {
+  border-top: 1px solid var(--app-border);
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-editor-status b {
+  color: var(--app-text-secondary);
+}
+html[data-theme]:not([data-theme="daylight"]) .attachment-picker {
+  border-color: var(--app-border-strong) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .attachment-picker:hover {
+  background: var(--app-hover) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-send-button {
+  background: var(--app-accent) !important;
+  color: #06140f !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .rich-send-button:disabled {
+  background: var(--app-surface-soft) !important;
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .composer-actions {
+  border-color: var(--app-border) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .composer-model-control,
+html[data-theme]:not([data-theme="daylight"]) .composer-model-control .arco-select-view,
+html[data-theme]:not([data-theme="daylight"]) .composer-model-control .arco-select-view-value {
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .composer-model-control .arco-select-view:hover {
+  background: var(--app-hover) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .composer-command-menu {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-surface-raised) !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .42) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .command-menu-head {
+  border-color: var(--app-border) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .command-menu-list button {
+  background: transparent !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .command-menu-list button:hover,
+html[data-theme]:not([data-theme="daylight"]) .command-menu-list button.active {
+  background: var(--app-hover) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .command-icon,
+html[data-theme]:not([data-theme="daylight"]) .chat-mention {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .attachment-card {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-soft) !important;
+}
+
+/* Conversation bubbles: override Element Plus X's light fill at the bubble shell. */
+html[data-theme]:not([data-theme="daylight"]) .element-chat-list {
+  --elx-bubble-text-color: var(--app-text-strong);
+  --elx-bubble-border-color: var(--app-border);
+  --elx-bubble-list-btn-color: var(--app-accent);
+}
+html[data-theme]:not([data-theme="daylight"]) .elx-bubble__content:has(.element-message-body.user) {
+  border: 1px solid var(--app-border-strong) !important;
+  background: linear-gradient(135deg, var(--app-accent-bg), rgba(79, 210, 159, .055)) !important;
+  color: var(--app-text-strong) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
+}
+html[data-theme="obsidian"] .elx-bubble__content:has(.element-message-body.user) {
+  background: linear-gradient(135deg, rgba(109, 140, 255, .17), rgba(109, 140, 255, .06)) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .elx-bubble__content:has(.element-message-body.assistant) {
+  border: 1px solid var(--app-border) !important;
+  background: var(--app-surface) !important;
+  color: var(--app-text) !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .2);
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body {
+  background: transparent !important;
+  color: inherit !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.user {
+  padding: 3px 5px !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.user .markdown-body,
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.user .markdown-body p {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant {
+  padding: 4px 6px 6px;
+}
+html[data-theme]:not([data-theme="daylight"]) .message-body > strong {
+  color: var(--app-text-strong) !important;
+  font-size: 13px;
+}
+html[data-theme]:not([data-theme="daylight"]) .message-avatar {
+  border: 1px solid var(--app-border-strong);
+  background: var(--app-surface-raised) !important;
+  color: var(--app-accent-soft) !important;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .18);
+}
+html[data-theme]:not([data-theme="daylight"]) .elx-bubble--end .message-avatar {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+
+/* Markdown reading contrast inside assistant answers. */
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body {
+  color: #c6d6d0 !important;
+  font-size: 14px;
+  line-height: 1.78;
+}
+html[data-theme="obsidian"] .element-message-body.assistant .markdown-body {
+  color: #cbd4e8 !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body :is(p, li, td) {
+  color: inherit !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body :is(h1, h2, h3, h4, h5, h6, strong) {
+  color: #f2faf7 !important;
+}
+html[data-theme="obsidian"] .element-message-body.assistant .markdown-body :is(h1, h2, h3, h4, h5, h6, strong) {
+  color: #f4f6ff !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body :is(h1, h2, h3, h4) {
+  margin-top: 18px;
+  margin-bottom: 8px;
+  letter-spacing: -.01em;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body :is(ul, ol) {
+  padding-left: 1.55em;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body li::marker {
+  color: var(--app-accent);
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body a {
+  color: var(--app-accent-soft) !important;
+  text-decoration-color: color-mix(in srgb, var(--app-accent) 55%, transparent);
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body blockquote {
+  margin: 12px 0;
+  border-left: 3px solid var(--app-accent);
+  padding: 8px 12px;
+  background: var(--app-accent-bg);
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .element-message-body.assistant .markdown-body code {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-soft) !important;
+  color: var(--app-accent-soft) !important;
+}
+
+html[data-theme]:not([data-theme="daylight"]) .execution-panel {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  box-shadow: none !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .execution-panel summary {
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .execution-panel summary:hover {
+  background: var(--app-hover);
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .execution-panel summary small {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .execution-content,
+html[data-theme]:not([data-theme="daylight"]) .trace-section {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-soft) !important;
+}
+
+/* Runtime audit panel */
+html[data-theme]:not([data-theme="daylight"]) .trace-panel[open] {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-surface-raised) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel > summary {
+  min-height: 48px;
+  padding: 10px 15px;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel > summary > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-text-strong);
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel > summary > span:first-child::before {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--app-accent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px var(--app-accent-bg);
+  content: "";
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel > summary small {
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary) !important;
+  font: 500 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-section {
+  gap: 10px;
+  border-top: 1px solid var(--app-border) !important;
+  padding: 14px 16px 15px;
+  background: transparent !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-section > strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--app-text-muted) !important;
+  font: 700 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .12em;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-section > strong::before {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--app-accent);
+  content: "";
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-section pre {
+  max-height: 220px;
+  margin: 0;
+  border: 1px solid var(--app-border) !important;
+  border-radius: 9px;
+  padding: 11px 13px;
+  background: rgba(2, 10, 8, .28) !important;
+  color: var(--app-text-secondary) !important;
+  font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+}
+html[data-theme="obsidian"] .trace-panel .trace-section pre {
+  background: rgba(3, 7, 18, .32) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-chips {
+  gap: 7px;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-chips span {
+  border: 1px solid color-mix(in srgb, var(--app-accent) 32%, transparent);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+  font: 600 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-section em {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--app-text-muted) !important;
+  font-size: 12px;
+}
+html[data-theme]:not([data-theme="daylight"]) .trace-panel .trace-section em::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--app-text-muted);
+  content: "";
+  opacity: .6;
+}
+
+/* Market overview */
+html[data-theme]:not([data-theme="daylight"]) .module-panel:has(.dashboard-view-toolbar) {
+  color: var(--app-text);
+}
+html[data-theme]:not([data-theme="daylight"]) .dashboard-view-toolbar {
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  background: var(--app-surface) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.view-controls, .chart-controls) .arco-radio-group-button {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.view-controls, .chart-controls) .arco-radio-button-content {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.view-controls, .chart-controls) .arco-radio-checked .arco-radio-button-content {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+html[data-theme]:not([data-theme="daylight"]) .dashboard-toolbar-actions .arco-btn-secondary,
+html[data-theme]:not([data-theme="daylight"]) .dashboard-toolbar-actions .arco-select-view,
+html[data-theme]:not([data-theme="daylight"]) .chart-controls .arco-select-view {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .market-section > h3,
+html[data-theme]:not([data-theme="daylight"]) .market-table-group > h3 {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-card {
+  border-color: var(--app-border) !important;
+  background: linear-gradient(145deg, var(--app-surface), color-mix(in srgb, var(--app-surface-raised) 72%, transparent)) !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .18) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-card:hover {
+  border-color: var(--app-border-strong) !important;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .25) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-card.is-drag-over {
+  border-color: var(--app-accent) !important;
+  box-shadow: inset 0 0 0 2px var(--app-accent-bg), 0 14px 38px rgba(0, 0, 0, .25) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-drag-handle {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-drag-handle:hover {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-hover) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .stock-heading > span,
+html[data-theme]:not([data-theme="daylight"]) .card-title strong {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .stock-heading code {
+  border: 1px solid color-mix(in srgb, var(--app-accent) 28%, transparent);
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .stock-classification {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .stock-classification strong {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-soft) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .fundamental-panel {
+  border-color: var(--app-border) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .fundamental-grid article {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .015);
+}
+html[data-theme]:not([data-theme="daylight"]) .fundamental-grid article:hover {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-surface-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .fundamental-grid span {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .fundamental-grid strong {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.hint.dark, .fundamental-panel .hint) {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .chart-controls {
+  border-top: 1px solid var(--app-border);
+  padding-top: 10px;
+}
+html[data-theme]:not([data-theme="daylight"]) .mini-chart,
+html[data-theme]:not([data-theme="daylight"]) .detail-kline {
+  border-color: var(--app-border) !important;
+  border-radius: 9px;
+  background: rgba(2, 10, 8, .18) !important;
+}
+html[data-theme="obsidian"] :is(.mini-chart, .detail-kline) {
+  background: rgba(3, 7, 18, .2) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-table {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-table :is(strong, td, code) {
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .subscription-table code {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .stock-summary > div,
+html[data-theme]:not([data-theme="daylight"]) .drawer-section {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-soft) !important;
+}
+
+/* Drawers, modals and data-entry forms */
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-drawer, .arco-modal) {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface) !important;
+  color: var(--app-text) !important;
+  box-shadow: -20px 0 60px rgba(0, 0, 0, .38) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-drawer-header, .arco-modal-header) {
+  min-height: 58px;
+  border-color: var(--app-border) !important;
+  background: var(--app-surface) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-drawer-title, .arco-modal-title) {
+  color: var(--app-text-strong) !important;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-drawer-close-btn, .arco-modal-close-btn) {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-drawer-close-btn, .arco-modal-close-btn):hover {
+  background: var(--app-hover) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-drawer-body, .arco-modal-body) {
+  background: linear-gradient(180deg, var(--app-surface), var(--app-canvas)) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-form-item-label-col > label,
+html[data-theme]:not([data-theme="daylight"]) .arco-form-item-label {
+  color: var(--app-text-secondary) !important;
+  font-size: 12px;
+  font-weight: 600;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-form-item-label-required-symbol {
+  color: var(--app-accent) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-input-wrapper, .arco-input-number, .arco-textarea-wrapper,
+  .arco-select-view, .arco-picker, .arco-cascader-view
+) {
+  border: 1px solid var(--app-border-strong) !important;
+  border-radius: 8px !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-strong) !important;
+  box-shadow: none !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-input-wrapper, .arco-input-number, .arco-textarea-wrapper,
+  .arco-select-view, .arco-picker, .arco-cascader-view
+):hover {
+  border-color: color-mix(in srgb, var(--app-accent) 48%, var(--app-border)) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-input-wrapper-focus, .arco-input-number-focus, .arco-textarea-wrapper-focus,
+  .arco-select-view-focus, .arco-picker-focused
+) {
+  border-color: var(--app-accent) !important;
+  box-shadow: 0 0 0 3px var(--app-accent-bg) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-input, .arco-input-number-input, .arco-textarea,
+  .arco-select-view-value, .arco-select-view-input, .arco-picker input
+) {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-input::placeholder, .arco-input-number-input::placeholder,
+  .arco-textarea::placeholder, .arco-select-view-placeholder
+) {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-select-view-tag {
+  border: 1px solid var(--app-border) !important;
+  border-radius: 6px !important;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-select-view-tag-remove-btn {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-select-dropdown, .arco-dropdown, .arco-picker-container) {
+  border: 1px solid var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, .38) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-select-option, .arco-dropdown-option) {
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.arco-select-option-hover, .arco-dropdown-option:hover) {
+  background: var(--app-hover) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-select-option-selected {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-radio-group-button {
+  overflow: hidden;
+  border: 1px solid var(--app-border) !important;
+  border-radius: 8px;
+  padding: 3px;
+  background: var(--app-surface-raised) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-radio-button-content {
+  border: 0 !important;
+  border-radius: 6px;
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-radio-checked .arco-radio-button-content {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-checkbox {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-checkbox:hover {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-hover) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-checkbox-checked {
+  border-color: color-mix(in srgb, var(--app-accent) 48%, var(--app-border)) !important;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-checkbox-icon {
+  border-color: var(--app-border-strong) !important;
+  background: transparent;
+}
+html[data-theme]:not([data-theme="daylight"]) .strategy-form .arco-checkbox-checked .arco-checkbox-icon {
+  border-color: var(--app-accent) !important;
+  background: var(--app-accent) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-alert-info {
+  border: 1px solid var(--app-border) !important;
+  border-radius: 8px;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-alert-info .arco-alert-icon {
+  color: var(--app-accent) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .drawer-footer {
+  border-color: var(--app-border) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .drawer-footer .arco-btn-secondary {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-btn-primary:not(.arco-btn-status-danger):not(.arco-btn-status-warning) {
+  border-color: var(--app-accent) !important;
+  background: var(--app-accent) !important;
+  color: #06140f !important;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--app-accent) 18%, transparent);
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-btn-primary:not(.arco-btn-status-danger):not(.arco-btn-status-warning):hover {
+  filter: brightness(1.08);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--app-accent) 26%, transparent);
+}
+
+/* All Arco tables must hover as one row, including fixed columns and striped rows. */
+html[data-theme]:not([data-theme="daylight"]) .arco-table-hover:not(.arco-table-dragging) .arco-table-tr:not(.arco-table-tr-empty):not(.arco-table-tr-summary):hover > .arco-table-td {
+  background: var(--app-hover) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-table-hover:not(.arco-table-dragging) .arco-table-tr:not(.arco-table-tr-empty):not(.arco-table-tr-summary):hover > .arco-table-td.arco-table-col-fixed-left::before,
+html[data-theme]:not([data-theme="daylight"]) .arco-table-hover:not(.arco-table-dragging) .arco-table-tr:not(.arco-table-tr-empty):not(.arco-table-tr-summary):hover > .arco-table-td.arco-table-col-fixed-right::before {
+  background: var(--app-hover) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-table-stripe .arco-table-tr:nth-child(even) > .arco-table-td {
+  background: color-mix(in srgb, var(--app-surface-soft) 55%, var(--app-surface)) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .arco-table-stripe .arco-table-tr:nth-child(even):hover > .arco-table-td {
+  background: var(--app-hover) !important;
+}
+
+/* Task center and management headers */
+html[data-theme]:not([data-theme="daylight"]) .module-panel > .panel-head {
+  border: 1px solid var(--app-border);
+  border-radius: 13px;
+  padding: 16px 18px;
+  background: var(--app-surface);
+  box-shadow: 0 8px 24px var(--app-shadow);
+}
+html[data-theme]:not([data-theme="daylight"]) .module-panel > .panel-head h2 {
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .module-panel > .panel-head p {
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+html[data-theme]:not([data-theme="daylight"]) .feature-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  box-shadow: 0 8px 24px var(--app-shadow);
+}
+html[data-theme]:not([data-theme="daylight"]) .feature-card :is(h3, p) { margin: 0; }
+html[data-theme]:not([data-theme="daylight"]) .feature-card h3 { color: var(--app-text-strong); }
+html[data-theme]:not([data-theme="daylight"]) .feature-card p { color: var(--app-text-secondary); line-height: 1.6; }
+html[data-theme]:not([data-theme="daylight"]) .task-card-project,
+html[data-theme]:not([data-theme="daylight"]) .task-drawer-project {
+  border: 1px solid var(--app-border);
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .task-drawer-project strong { color: var(--app-text-strong) !important; }
+html[data-theme]:not([data-theme="daylight"]) .task-prompt-composer {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-surface-raised) !important;
+}
+
+/* Native forms used by task, role, skill and plugin drawers. */
+html[data-theme]:not([data-theme="daylight"]) .role-form {
+  border-color: var(--app-border) !important;
+  background: transparent !important;
+  color: var(--app-text);
+}
+html[data-theme]:not([data-theme="daylight"]) .role-form label {
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .role-form :is(input:not([type="checkbox"]):not([type="file"]), select, textarea) {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-strong) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .role-form :is(input, select, textarea):focus {
+  border-color: var(--app-accent) !important;
+  box-shadow: 0 0 0 3px var(--app-accent-bg) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .role-form option {
+  background: var(--app-surface-raised);
+  color: var(--app-text-strong);
+}
+html[data-theme]:not([data-theme="daylight"]) .role-form .file-button,
+html[data-theme]:not([data-theme="daylight"]) .role-avatar-upload {
+  border: 1px solid var(--app-border);
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+
+/* Skill, role and plugin cards */
+html[data-theme]:not([data-theme="daylight"]) .skill-tabs {
+  border-color: var(--app-border) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .skill-tabs button {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .skill-tabs button:hover {
+  border-color: var(--app-border-strong) !important;
+  background: var(--app-hover) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .skill-tabs button.active {
+  border-color: color-mix(in srgb, var(--app-accent) 45%, var(--app-border)) !important;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .skill-tabs span { color: var(--app-text-muted) !important; }
+html[data-theme]:not([data-theme="daylight"]) .role-grid,
+html[data-theme]:not([data-theme="daylight"]) .plugin-list { gap: 14px; }
+html[data-theme]:not([data-theme="daylight"]) .role-card {
+  border-color: var(--app-border) !important;
+  border-radius: 12px;
+  background: var(--app-surface) !important;
+  color: var(--app-text);
+  box-shadow: 0 8px 25px var(--app-shadow);
+}
+html[data-theme]:not([data-theme="daylight"]) .role-card:hover { border-color: var(--app-border-strong) !important; }
+html[data-theme]:not([data-theme="daylight"]) .role-card :is(p, span) { color: var(--app-text-secondary); }
+html[data-theme]:not([data-theme="daylight"]) .role-card strong { color: var(--app-text-strong); }
+html[data-theme]:not([data-theme="daylight"]) .role-card pre,
+html[data-theme]:not([data-theme="daylight"]) .skill-card-content {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .role-card button.small:not(.danger) {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-raised);
+  color: var(--app-text-secondary);
+}
+html[data-theme]:not([data-theme="daylight"]) .role-card button.small:not(.danger):hover {
+  background: var(--app-hover);
+  color: var(--app-text-strong);
+}
+html[data-theme]:not([data-theme="daylight"]) .capability-panel {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .capability-panel h3 { color: var(--app-text-strong); }
+html[data-theme]:not([data-theme="daylight"]) .check-item { color: var(--app-text-secondary) !important; }
+
+/* Skill preview file browser */
+html[data-theme]:not([data-theme="daylight"]) .skill-preview-head h2,
+html[data-theme]:not([data-theme="daylight"]) .skill-file-tree-title,
+html[data-theme]:not([data-theme="daylight"]) .skill-file-head strong { color: var(--app-text-strong) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-preview-head p,
+html[data-theme]:not([data-theme="daylight"]) .skill-file-head span { color: var(--app-text-muted) !important; }
+html[data-theme]:not([data-theme="daylight"]) :is(.skill-preview-meta, .skill-browser) { border-color: var(--app-border) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-preview-meta :is(dt, dd) { border-color: var(--app-border) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-preview-meta dt { background: var(--app-surface-soft) !important; color: var(--app-text-muted) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-preview-meta dd { background: var(--app-surface) !important; color: var(--app-text-secondary) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-file-tree {
+  border-color: var(--app-border) !important;
+  background: var(--app-sidebar) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .skill-file-tree-title,
+html[data-theme]:not([data-theme="daylight"]) .skill-file-head { border-color: var(--app-border) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-file-tree button { color: var(--app-text-secondary) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-file-tree button:hover:not(:disabled),
+html[data-theme]:not([data-theme="daylight"]) .skill-file-tree button.active { background: var(--app-hover) !important; color: var(--app-accent-soft) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-file-tree button:disabled { color: var(--app-text-strong) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-file-preview { background: var(--app-surface) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-preview-source { background: var(--app-surface-raised) !important; color: var(--app-text-secondary) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-references { border-color: var(--app-border) !important; background: var(--app-surface-soft) !important; }
+html[data-theme]:not([data-theme="daylight"]) .skill-references button { border-color: var(--app-border) !important; background: var(--app-surface-raised) !important; color: var(--app-accent-soft) !important; }
+
+/* Selected navigation and control icons must inherit the active theme, never Arco blue. */
+html[data-theme] :is(
+  .arco-menu-item.arco-menu-selected,
+  .arco-menu-inline-header.arco-menu-selected,
+  .arco-menu-pop-header.arco-menu-selected,
+  .arco-dropdown-option-active,
+  .arco-dropdown-option-selected
+) {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme] :is(
+  .arco-menu-item.arco-menu-selected,
+  .arco-menu-inline-header.arco-menu-selected,
+  .arco-menu-pop-header.arco-menu-selected,
+  .arco-dropdown-option-active,
+  .arco-dropdown-option-selected
+) :is(.arco-menu-icon, .arco-icon, svg) {
+  color: var(--app-accent-soft) !important;
+  fill: currentColor;
+}
+html[data-theme] .arco-menu-horizontal .arco-menu-selected::after {
+  background-color: var(--app-accent) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-btn-text:not(.arco-btn-status-danger):not(.arco-btn-status-warning):not(.arco-btn-status-success),
+  .arco-link:not(.arco-link-status-danger):not(.arco-link-status-warning):not(.arco-link-status-success),
+  .arco-tabs-tab-active,
+  .arco-radio-checked .arco-radio-label,
+  .arco-pagination-item-active,
+  .arco-select-option-selected
+) {
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-btn-text:not(.arco-btn-status-danger):not(.arco-btn-status-warning):hover,
+  .arco-link:not(.arco-link-status-danger):not(.arco-link-status-warning):hover,
+  .arco-select-option-selected,
+  .arco-pagination-item-active
+) {
+  background: var(--app-accent-bg) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-tag-arcoblue,
+  .arco-tag-blue,
+  .arco-tag-purple,
+  .arco-tag-checkable.arco-tag-checked
+) {
+  border-color: color-mix(in srgb, var(--app-accent) 34%, transparent) !important;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(
+  .arco-radio-checked .arco-radio-button-content,
+  .arco-radio-button.arco-radio-checked
+) {
+  border-color: var(--app-accent) !important;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+
+/* Remaining shared management surfaces */
+html[data-theme]:not([data-theme="daylight"]) .empty-state {
+  border-color: var(--app-border-strong) !important;
+  background: color-mix(in srgb, var(--app-surface) 76%, transparent);
+  color: var(--app-text-muted) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .system-settings .settings-form,
+html[data-theme]:not([data-theme="daylight"]) .source-panel {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface) !important;
+  box-shadow: 0 8px 25px var(--app-shadow) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .settings-card-head h3,
+html[data-theme]:not([data-theme="daylight"]) .source-panel h3,
+html[data-theme]:not([data-theme="daylight"]) .source-panel h4 { color: var(--app-text-strong) !important; }
+html[data-theme]:not([data-theme="daylight"]) .settings-card-head p,
+html[data-theme]:not([data-theme="daylight"]) .source-name small { color: var(--app-text-muted) !important; }
+html[data-theme]:not([data-theme="daylight"]) .settings-card-icon,
+html[data-theme]:not([data-theme="daylight"]) .source-logo {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .system-settings label { color: var(--app-text-secondary) !important; }
+html[data-theme]:not([data-theme="daylight"]) .advanced-settings,
+html[data-theme]:not([data-theme="daylight"]) .model-config-tabs { border-color: var(--app-border) !important; }
+html[data-theme]:not([data-theme="daylight"]) .outline-button,
+html[data-theme]:not([data-theme="daylight"]) .secondary-action {
+  border-color: var(--app-border) !important;
+  background: var(--app-surface-raised) !important;
+  color: var(--app-text-secondary) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .ghost-danger {
+  border-color: rgba(248, 113, 113, .28) !important;
+  background: rgba(127, 29, 29, .16) !important;
+  color: #fca5a5 !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.project-card.active, .role-chip.active, .model-config-tabs .role-chip.active) {
+  border-color: color-mix(in srgb, var(--app-accent) 48%, var(--app-border)) !important;
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent) 10%, transparent) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) :is(.project-table-icon, .project-active-badge, .detail-tag) {
+  background: var(--app-accent-bg) !important;
+  color: var(--app-accent-soft) !important;
+}
+html[data-theme]:not([data-theme="daylight"]) .role-identity :is(strong, small) { color: var(--app-text-secondary) !important; }
+
+html[data-theme="daylight"] main { background: var(--app-canvas); }
+html[data-theme="daylight"] .app-shell { background: var(--app-bg); }
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme] body,
+  html[data-theme] main,
+  html[data-theme] .app-shell,
+  html[data-theme] .app-header,
+  html[data-theme] .app-sidebar { transition: background-color .25s ease, color .25s ease, border-color .25s ease; }
+}

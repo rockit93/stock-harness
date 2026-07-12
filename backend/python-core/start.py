@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import subprocess
 import sys
@@ -10,6 +11,8 @@ from pathlib import Path
 SERVICE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SERVICE_DIR.parents[1]
 VENV_DIR = ROOT_DIR / ".venv"
+REQUIREMENTS_FILE = SERVICE_DIR / "requirements.txt"
+REQUIREMENTS_MARKER = VENV_DIR / ".requirements.sha256"
 
 
 def venv_python() -> Path:
@@ -20,15 +23,19 @@ def venv_python() -> Path:
 
 def ensure_venv() -> Path:
     python = venv_python()
-    if python.exists():
-        return python
+    created = not python.exists()
+    if created:
+        subprocess.check_call([sys.executable, "-m", "venv", str(VENV_DIR)], cwd=ROOT_DIR)
+        subprocess.check_call([str(python), "-m", "pip", "install", "--upgrade", "pip"], cwd=ROOT_DIR)
 
-    subprocess.check_call([sys.executable, "-m", "venv", str(VENV_DIR)], cwd=ROOT_DIR)
-    subprocess.check_call([str(python), "-m", "pip", "install", "--upgrade", "pip"], cwd=ROOT_DIR)
-    subprocess.check_call(
-        [str(python), "-m", "pip", "install", "-r", str(SERVICE_DIR / "requirements.txt")],
-        cwd=ROOT_DIR,
-    )
+    requirements_hash = hashlib.sha256(REQUIREMENTS_FILE.read_bytes()).hexdigest()
+    installed_hash = REQUIREMENTS_MARKER.read_text(encoding="utf-8").strip() if REQUIREMENTS_MARKER.exists() else ""
+    if created or installed_hash != requirements_hash:
+        subprocess.check_call(
+            [str(python), "-m", "pip", "install", "-r", str(REQUIREMENTS_FILE)],
+            cwd=ROOT_DIR,
+        )
+        REQUIREMENTS_MARKER.write_text(requirements_hash, encoding="utf-8")
     return python
 
 

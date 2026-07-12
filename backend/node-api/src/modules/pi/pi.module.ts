@@ -6,11 +6,12 @@ import { PiWorkspaceService } from "./pi-workspace.service";
 import { SettingsModule } from "../settings/settings.module";
 import { PiRuntimeRepository } from "./pi-runtime.repository";
 import { PiRuntimeService } from "./pi-runtime.service";
+import { ToolRegistryService } from "./tools/tool-registry.service";
 
 @Module({
   imports: [AuthModule, SettingsModule],
   controllers: [PiController],
-  providers: [PiRepository, PiWorkspaceService, PiRuntimeRepository, PiRuntimeService],
+  providers: [PiRepository, PiWorkspaceService, PiRuntimeRepository, PiRuntimeService, ToolRegistryService],
   exports: [PiRepository, PiWorkspaceService],
 })
 export class PiModule {}

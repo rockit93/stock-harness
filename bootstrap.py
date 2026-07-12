@@ -206,6 +206,7 @@ def main() -> int:
     started_at: dict[str, float] = {}
     failure_counts: dict[str, int] = {key: 0 for key, _ in services}
     next_restart: dict[str, float] = {key: 0 for key, _ in services}
+    port_missing_since: dict[str, float | None] = {key: None for key, _ in services}
     log_files: dict[str, object] = {}
 
     def start_service(key: str) -> None:
@@ -226,6 +227,7 @@ def main() -> int:
         )
         processes[key] = process
         started_at[key] = time.monotonic()
+        port_missing_since[key] = None
         print(f"Started {config['name']} (PID {process.pid}).")
 
     try:
@@ -270,9 +272,27 @@ def main() -> int:
             for key, process in list(processes.items()):
                 return_code = process.poll()
                 if return_code is None:
+                    port = int(service_map[key]["port"])
+                    if port_is_busy(port):
+                        port_missing_since[key] = None
+                    elif time.monotonic() - started_at[key] >= 10:
+                        missing_since = port_missing_since[key]
+                        if missing_since is None:
+                            port_missing_since[key] = time.monotonic()
+                        elif time.monotonic() - missing_since >= 3:
+                            print(
+                                f"Service '{key}' is running but port {port} is not listening; "
+                                "stopping it so the supervisor can restart it."
+                            )
+                            stop_process(process)
+                            time.sleep(0.2)
+                            if process.poll() is None:
+                                process.kill()
+                            port_missing_since[key] = None
                     continue
 
                 del processes[key]
+                port_missing_since[key] = None
                 if not owns_service(key, owners):
                     print(f"Service '{key}' was handed off to another bootstrap instance.")
                     continue

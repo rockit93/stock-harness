@@ -11,6 +11,8 @@ type RoleRow = {
   name: string;
   responsibility: string;
   system_prompt: string;
+  avatar: string | null;
+  model_config_id: number | null;
   created_at: string;
 };
 
@@ -43,21 +45,26 @@ export class RolesRepository {
         PRIMARY KEY (role_id, plugin_id)
       );
     `);
+    const columns = this.db.prepare("PRAGMA table_info(agent_roles)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "model_config_id")) this.db.exec("ALTER TABLE agent_roles ADD COLUMN model_config_id INTEGER");
+    if (!columns.some((column) => column.name === "avatar")) this.db.exec("ALTER TABLE agent_roles ADD COLUMN avatar TEXT");
   }
 
   list(userId: number) {
     const rows = this.db
-      .prepare("SELECT id, user_id, name, responsibility, system_prompt, created_at FROM agent_roles WHERE user_id = ? ORDER BY id")
+      .prepare("SELECT id, user_id, name, responsibility, system_prompt, avatar, model_config_id, created_at FROM agent_roles WHERE user_id = ? ORDER BY id")
       .all(userId) as RoleRow[];
     const roles = rows.map((row) => this.mapRow(row));
     this.piWorkspace.syncRoles(userId, roles);
     return roles;
   }
 
-  create(userId: number, body: { name?: string; responsibility?: string; systemPrompt?: string }) {
+  create(userId: number, body: { name?: string; responsibility?: string; systemPrompt?: string; avatar?: string | null; modelConfigId?: number | null }) {
     const name = String(body.name ?? "").trim();
     const responsibility = String(body.responsibility ?? "").trim();
     const systemPrompt = String(body.systemPrompt ?? "").trim();
+    const avatar = this.normalizeAvatar(body.avatar);
+    const modelConfigId = this.normalizeOwnedModelId(userId, body.modelConfigId);
 
     if (!name) {
       throw new BadRequestException("角色名称不能为空");
@@ -68,18 +75,38 @@ export class RolesRepository {
 
     const createdAt = new Date().toISOString();
     const result = this.db
-      .prepare("INSERT INTO agent_roles (user_id, name, responsibility, system_prompt, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(userId, name, responsibility, systemPrompt || responsibility, createdAt);
+      .prepare("INSERT INTO agent_roles (user_id, name, responsibility, system_prompt, avatar, model_config_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(userId, name, responsibility, systemPrompt || responsibility, avatar, modelConfigId, createdAt);
     const role = {
       id: Number(result.lastInsertRowid),
       userId,
       name,
       responsibility,
       systemPrompt: systemPrompt || responsibility,
+      avatar,
+      modelConfigId,
       createdAt,
       skillIds: [],
       pluginIds: [],
     };
+    this.piWorkspace.syncRole(userId, role);
+    this.piWorkspace.syncRoles(userId, this.list(userId));
+    return role;
+  }
+
+  update(userId: number, id: number, body: { name?: string; responsibility?: string; systemPrompt?: string; avatar?: string | null; modelConfigId?: number | null }) {
+    const existing = this.db.prepare("SELECT id FROM agent_roles WHERE user_id = ? AND id = ?").get(userId, id);
+    if (!existing) throw new BadRequestException("角色不存在");
+    const name = String(body.name ?? "").trim();
+    const responsibility = String(body.responsibility ?? "").trim();
+    const systemPrompt = String(body.systemPrompt ?? "").trim();
+    if (!name) throw new BadRequestException("角色名称不能为空");
+    if (!responsibility) throw new BadRequestException("角色职责不能为空");
+    const avatar = this.normalizeAvatar(body.avatar);
+    const modelConfigId = this.normalizeOwnedModelId(userId, body.modelConfigId);
+    this.db.prepare("UPDATE agent_roles SET name = ?, responsibility = ?, system_prompt = ?, avatar = ?, model_config_id = ? WHERE user_id = ? AND id = ?")
+      .run(name, responsibility, systemPrompt || responsibility, avatar, modelConfigId, userId, id);
+    const role = this.mapRow(this.db.prepare("SELECT id, user_id, name, responsibility, system_prompt, avatar, model_config_id, created_at FROM agent_roles WHERE user_id = ? AND id = ?").get(userId, id) as RoleRow);
     this.piWorkspace.syncRole(userId, role);
     this.piWorkspace.syncRoles(userId, this.list(userId));
     return role;
@@ -92,19 +119,21 @@ export class RolesRepository {
     this.piWorkspace.removeRole(userId, id);
   }
 
-  updateCapabilities(userId: number, id: number, body: { skillIds?: number[]; pluginIds?: number[] }) {
-    const existingRole = this.db.prepare("SELECT id FROM agent_roles WHERE user_id = ? AND id = ?").get(userId, id) as { id: number } | undefined;
+  updateCapabilities(userId: number, id: number, body: { skillIds?: number[]; pluginIds?: number[]; modelConfigId?: number | null }) {
+    const existingRole = this.db.prepare("SELECT id, model_config_id FROM agent_roles WHERE user_id = ? AND id = ?").get(userId, id) as { id: number; model_config_id: number | null } | undefined;
     if (!existingRole) {
       throw new BadRequestException("角色不存在");
     }
 
     const skillIds = this.filterOwnedIds("pi_skills", userId, this.normalizeIds(body.skillIds));
     const pluginIds = this.filterOwnedIds("pi_plugins", userId, this.normalizeIds(body.pluginIds));
+    const modelConfigId = body.modelConfigId === undefined ? existingRole.model_config_id : this.normalizeOwnedModelId(userId, body.modelConfigId);
 
     const insertSkill = this.db.prepare("INSERT OR IGNORE INTO role_skills (role_id, skill_id) VALUES (?, ?)");
     const insertPlugin = this.db.prepare("INSERT OR IGNORE INTO role_plugins (role_id, plugin_id) VALUES (?, ?)");
     this.db.prepare("DELETE FROM role_skills WHERE role_id = ?").run(id);
     this.db.prepare("DELETE FROM role_plugins WHERE role_id = ?").run(id);
+    this.db.prepare("UPDATE agent_roles SET model_config_id = ? WHERE user_id = ? AND id = ?").run(modelConfigId, userId, id);
     for (const skillId of skillIds) {
       insertSkill.run(id, skillId);
     }
@@ -114,7 +143,7 @@ export class RolesRepository {
 
     const updatedRole = this.mapRow(
       this.db
-        .prepare("SELECT id, user_id, name, responsibility, system_prompt, created_at FROM agent_roles WHERE user_id = ? AND id = ?")
+        .prepare("SELECT id, user_id, name, responsibility, system_prompt, avatar, model_config_id, created_at FROM agent_roles WHERE user_id = ? AND id = ?")
         .get(userId, id) as RoleRow,
     );
     this.piWorkspace.syncRole(userId, updatedRole);
@@ -129,6 +158,8 @@ export class RolesRepository {
       name: row.name,
       responsibility: row.responsibility,
       systemPrompt: row.system_prompt,
+      avatar: row.avatar,
+      modelConfigId: row.model_config_id,
       createdAt: row.created_at,
       skillIds: this.listRelationIds("role_skills", "skill_id", row.id),
       pluginIds: this.listRelationIds("role_plugins", "plugin_id", row.id),
@@ -150,5 +181,21 @@ export class RolesRepository {
     const rows = this.db.prepare(`SELECT id FROM ${table} WHERE user_id = ?`).all(userId) as Array<{ id: number }>;
     const owned = new Set(rows.map((row) => row.id));
     return ids.filter((id) => owned.has(id));
+  }
+
+  private normalizeOwnedModelId(userId: number, value: unknown) {
+    const id = Number(value || 0);
+    if (!Number.isInteger(id) || id <= 0) return null;
+    const found = this.db.prepare("SELECT id FROM user_models WHERE user_id = ? AND id = ?").get(userId, id);
+    if (!found) throw new BadRequestException("模型配置不存在或不属于当前用户");
+    return id;
+  }
+
+  private normalizeAvatar(value: unknown) {
+    const avatar = String(value ?? "").trim();
+    if (!avatar) return null;
+    if (!/^data:image\/(png|jpeg|webp|gif);base64,/i.test(avatar)) throw new BadRequestException("头像格式不支持");
+    if (avatar.length > 1_400_000) throw new BadRequestException("头像不能超过 1 MB");
+    return avatar;
   }
 }

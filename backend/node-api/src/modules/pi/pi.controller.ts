@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Req, Res, UseG
 import type { FastifyReply } from "fastify";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
 import { PiRepository } from "./pi.repository";
-import { PiRuntimeService, PiStreamEvent } from "./pi-runtime.service";
+import { ChatBody, PiRuntimeService, PiStreamEvent } from "./pi-runtime.service";
 
 @UseGuards(AuthGuard)
 @Controller("pi")
@@ -12,10 +12,59 @@ export class PiController {
     @Inject(PiRuntimeService) private readonly runtime: PiRuntimeService,
   ) {}
 
+  @Get("conversations")
+  listConversations(@Req() req: AuthenticatedRequest) {
+    return this.runtime.listConversations(Number(req.user.sub));
+  }
+
+  @Get("projects")
+  listProjects(@Req() req: AuthenticatedRequest) {
+    return this.runtime.listProjects(Number(req.user.sub));
+  }
+
+  @Post("projects")
+  createProject(@Req() req: AuthenticatedRequest, @Body() body: unknown) {
+    return this.runtime.saveProject(Number(req.user.sub), null, body as Parameters<PiRuntimeService["saveProject"]>[2]);
+  }
+
+  @Put("projects/:id")
+  updateProject(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    return this.runtime.saveProject(Number(req.user.sub), Number(id), body as Parameters<PiRuntimeService["saveProject"]>[2]);
+  }
+
+  @Delete("projects/:id")
+  removeProject(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    this.runtime.removeProject(Number(req.user.sub), Number(id));
+    return { ok: true };
+  }
+
+  @Post("projects/:id/archive")
+  archiveProject(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.runtime.setProjectArchived(Number(req.user.sub), Number(id), true);
+  }
+
+  @Post("projects/:id/restore")
+  restoreProject(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.runtime.setProjectArchived(Number(req.user.sub), Number(id), false);
+  }
+
+  @Get("tools")
+  listTools() { return { tools: this.runtime.listTools() }; }
+
+  @Put("projects/:id/tools")
+  setProjectTools(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: { toolNames?: string[] }) {
+    return this.runtime.setProjectTools(Number(req.user.sub), Number(id), body.toolNames || []);
+  }
+
+  @Put("roles/:id/tools")
+  setRoleTools(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: { toolNames?: string[] }) {
+    return this.runtime.setRoleTools(Number(req.user.sub), Number(id), body.toolNames || []);
+  }
+
   @Post("chat")
   async chat(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { roleId?: number; message?: string },
+    @Body() body: ChatBody,
     @Res() reply: FastifyReply,
   ) {
     reply.hijack();
@@ -46,6 +95,21 @@ export class PiController {
   @Post("skills")
   createSkill(@Req() req: AuthenticatedRequest, @Body() body: unknown) {
     return this.pi.createSkill(Number(req.user.sub), body as { name?: string; description?: string; content?: string });
+  }
+
+  @Get("skills/:id/package")
+  getSkillPackage(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.pi.getSkillPackage(Number(req.user.sub), Number(id));
+  }
+
+  @Put("skills/:id")
+  updateSkill(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown) {
+    return this.pi.updateSkill(Number(req.user.sub), Number(id), body as { name?: string; description?: string; content?: string; visibility?: string });
+  }
+
+  @Post("skills/:id/copy")
+  copySkill(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.pi.copySkill(Number(req.user.sub), Number(id));
   }
 
   @Delete("skills/:id")

@@ -15,6 +15,11 @@ type SkillRow = {
   package_name: string | null;
   package_json: string | null;
   created_at: string;
+  updated_at: string | null;
+  visibility: string;
+  is_system: number;
+  copied_from_id: number | null;
+  owner_name: string | null;
 };
 
 type PluginRow = {
@@ -76,7 +81,11 @@ export class PiRepository {
         source_type TEXT NOT NULL DEFAULT 'manual',
         package_name TEXT,
         package_json TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        visibility TEXT NOT NULL DEFAULT 'private',
+        is_system INTEGER NOT NULL DEFAULT 0,
+        copied_from_id INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS pi_plugins (
@@ -110,36 +119,57 @@ export class PiRepository {
     this.ensureColumn("pi_skills", "source_type", "TEXT NOT NULL DEFAULT 'manual'");
     this.ensureColumn("pi_skills", "package_name", "TEXT");
     this.ensureColumn("pi_skills", "package_json", "TEXT");
+    this.ensureColumn("pi_skills", "updated_at", "TEXT");
+    this.ensureColumn("pi_skills", "visibility", "TEXT NOT NULL DEFAULT 'private'");
+    this.ensureColumn("pi_skills", "is_system", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("pi_skills", "copied_from_id", "INTEGER");
     this.ensureColumn("pi_plugins", "source_type", "TEXT NOT NULL DEFAULT 'manual'");
     this.ensureColumn("pi_plugins", "package_name", "TEXT");
     this.ensureColumn("pi_plugins", "package_json", "TEXT");
+    this.seedSystemSkills();
   }
 
   listSkills(userId: number) {
     const rows = this.db
       .prepare(
-        `SELECT id, user_id, name, description, content, source_type, package_name, package_json, created_at
-         FROM pi_skills WHERE user_id = ? ORDER BY id DESC`,
+        `SELECT s.id, s.user_id, s.name, s.description, s.content, s.source_type, s.package_name, s.package_json,
+                s.created_at, s.updated_at, s.visibility, s.is_system, s.copied_from_id, u.username AS owner_name
+         FROM pi_skills s LEFT JOIN users u ON u.id = s.user_id
+         WHERE s.user_id = ? OR s.visibility = 'public' OR s.is_system = 1
+         ORDER BY s.is_system DESC, s.id DESC`,
       )
       .all(userId) as SkillRow[];
-    return rows.map((row) => this.mapSkill(row));
+    return rows.map((row) => ({ ...this.mapSkill(row), owned: row.user_id === userId }));
   }
 
-  createSkill(userId: number, body: { name?: string; description?: string; content?: string; package?: PiPackagePayload }) {
+  getSkillPackage(userId: number, id: number) {
+    const skill = this.findAvailableSkill(userId, id);
+    const files = this.parsePackageFiles(skill.packageJson);
+    const packageFiles = files.length ? files : [{ path: "SKILL.md", content: skill.content, encoding: "utf8" as const, size: skill.content.length }];
+    return {
+      skillId: skill.id,
+      packageName: skill.packageName || skill.name,
+      entry: packageFiles.find((file) => /(^|\/)SKILL\.md$/i.test(file.path))?.path || packageFiles[0]?.path || null,
+      files: packageFiles.map((file) => ({ path: file.path, encoding: file.encoding, size: file.size, content: file.encoding === "utf8" ? file.content : null })),
+    };
+  }
+
+  createSkill(userId: number, body: { name?: string; description?: string; content?: string; visibility?: string; package?: PiPackagePayload }) {
     const name = String(body.name ?? "").trim();
     const description = String(body.description ?? "").trim();
     const packagePayload = this.normalizePackage(body.package);
     const content = String(body.content ?? this.pickPackageText(packagePayload, ["SKILL.md", "README.md", ".md", ".txt"])).trim();
+    const visibility = body.visibility === "public" ? "public" : "private";
     if (!name) throw new BadRequestException("Skill 名称不能为空");
     if (!content) throw new BadRequestException("Skill 内容不能为空");
 
     const createdAt = new Date().toISOString();
     const result = this.db
       .prepare(
-        `INSERT INTO pi_skills (user_id, name, description, content, source_type, package_name, package_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pi_skills (user_id, name, description, content, source_type, package_name, package_json, created_at, updated_at, visibility)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(userId, name, description || name, content, packagePayload.type, packagePayload.name, JSON.stringify(packagePayload.files), createdAt);
+      .run(userId, name, description || name, content, packagePayload.type, packagePayload.name, JSON.stringify(packagePayload.files), createdAt, createdAt, visibility);
     const skill = {
       id: Number(result.lastInsertRowid),
       userId,
@@ -150,15 +180,71 @@ export class PiRepository {
       packageName: packagePayload.name,
       packageFiles: this.publicPackageFiles(packagePayload.files),
       createdAt,
+      updatedAt: createdAt,
+      visibility,
+      isSystem: false,
+      copiedFromId: null,
     };
     this.piWorkspace.syncSkillPackage(userId, { ...skill, packageFiles: packagePayload.files });
     return skill;
+  }
+
+  updateSkill(userId: number, id: number, body: { name?: string; description?: string; content?: string; visibility?: string }) {
+    const current = this.findOwnedSkill(userId, id);
+    const name = String(body.name ?? current.name).trim();
+    const description = String(body.description ?? current.description).trim() || name;
+    const content = String(body.content ?? current.content).trim();
+    const visibility = body.visibility === undefined ? current.visibility : body.visibility === "public" ? "public" : "private";
+    if (!name) throw new BadRequestException("Skill 名称不能为空");
+    if (!content) throw new BadRequestException("Skill 内容不能为空");
+    const updatedAt = new Date().toISOString();
+    this.db.prepare("UPDATE pi_skills SET name = ?, description = ?, content = ?, visibility = ?, updated_at = ? WHERE user_id = ? AND id = ? AND is_system = 0")
+      .run(name, description, content, visibility, updatedAt, userId, id);
+    const skill = this.findOwnedSkill(userId, id);
+    this.piWorkspace.syncSkillPackage(userId, { ...skill, packageFiles: this.parsePackageFiles(skill.packageJson) });
+    return this.publicOwnedSkill(skill);
+  }
+
+  copySkill(userId: number, id: number) {
+    const source = this.findAvailableSkill(userId, id);
+    const now = new Date().toISOString();
+    const result = this.db.prepare(
+      `INSERT INTO pi_skills (user_id, name, description, content, source_type, package_name, package_json, created_at, updated_at, visibility, copied_from_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'private', ?)`,
+    ).run(userId, `${source.name} - 副本`, source.description, source.content, source.sourceType, source.packageName, source.packageJson, now, now, source.id);
+    const copied = this.findOwnedSkill(userId, Number(result.lastInsertRowid));
+    this.piWorkspace.syncSkillPackage(userId, { ...copied, packageFiles: this.parsePackageFiles(copied.packageJson) });
+    return this.publicOwnedSkill(copied);
   }
 
   removeSkill(userId: number, id: number) {
     this.db.prepare("DELETE FROM pi_skills WHERE user_id = ? AND id = ?").run(userId, id);
     this.db.prepare("DELETE FROM role_skills WHERE skill_id = ?").run(id);
     this.piWorkspace.removeSkillPackage(userId, id);
+  }
+
+  private findOwnedSkill(userId: number, id: number) {
+    const row = this.db.prepare(
+      `SELECT id, user_id, name, description, content, source_type, package_name, package_json, created_at, updated_at,
+              visibility, is_system, copied_from_id, NULL AS owner_name FROM pi_skills WHERE user_id = ? AND id = ?`,
+    ).get(userId, id) as SkillRow | undefined;
+    if (!row) throw new BadRequestException("Skill 不存在或无权修改");
+    return { ...this.mapSkill(row), packageJson: row.package_json };
+  }
+
+  private findAvailableSkill(userId: number, id: number) {
+    const row = this.db.prepare(
+      `SELECT id, user_id, name, description, content, source_type, package_name, package_json, created_at, updated_at,
+              visibility, is_system, copied_from_id, NULL AS owner_name FROM pi_skills
+       WHERE id = ? AND (user_id = ? OR visibility = 'public' OR is_system = 1)`,
+    ).get(id, userId) as SkillRow | undefined;
+    if (!row) throw new BadRequestException("Skill 不存在或不可访问");
+    return { ...this.mapSkill(row), packageJson: row.package_json };
+  }
+
+  private publicOwnedSkill(skill: ReturnType<PiRepository["findOwnedSkill"]>) {
+    const { packageJson: _packageJson, ...result } = skill;
+    return { ...result, owned: true };
   }
 
   listPlugins(userId: number) {
@@ -289,6 +375,11 @@ export class PiRepository {
       packageName: row.package_name,
       packageFiles: this.publicPackageFiles(this.parsePackageFiles(row.package_json)),
       createdAt: row.created_at,
+      updatedAt: row.updated_at ?? row.created_at,
+      visibility: row.visibility ?? "private",
+      isSystem: Boolean(row.is_system),
+      copiedFromId: row.copied_from_id,
+      ownerName: row.owner_name,
     };
   }
 
@@ -322,6 +413,36 @@ export class PiRepository {
     const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!columns.some((item) => item.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
+  private seedSystemSkills() {
+    // Keep the existing row id so role/project assignments survive the provider-neutral rename.
+    this.db.prepare(
+      `UPDATE pi_skills
+       SET name = ?, description = ?, content = ?, updated_at = ?
+       WHERE is_system = 1 AND name = ?`,
+    ).run(
+      "数据源",
+      "按照用户当前配置的市场路由获取行情与基本面数据。",
+      "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。",
+      new Date().toISOString(),
+      "Futu 数据源",
+    );
+    const skills = [
+      ["量化研究规范", "将投资想法拆成可验证、可回测、可解释的研究流程。", "# 量化研究规范\n\n先明确市场、标的、周期、入场、出场与风控规则；使用确定性数据与回测工具验证；清楚区分研究结论与投资建议。"],
+      ["数据源", "按照用户当前配置的市场路由获取行情与基本面数据。", "# 数据源\n\n始终读取用户当前的数据源与市场路由配置。Futu、AkShare、Yahoo Finance、SEC EDGAR 和自定义 HTTP 均为运行时 provider，而不是独立 Skill。按主备顺序调用，失败时记录降级原因；记录复权、时区与数据区间，不伪造行情。"],
+    ];
+    const insert = this.db.prepare(
+      `INSERT INTO pi_skills (user_id, name, description, content, source_type, created_at, updated_at, visibility, is_system)
+       VALUES (0, ?, ?, ?, 'system', ?, ?, 'public', 1)`,
+    );
+    for (const [name, description, content] of skills) {
+      const exists = this.db.prepare("SELECT id FROM pi_skills WHERE is_system = 1 AND name = ?").get(name);
+      if (!exists) {
+        const now = new Date().toISOString();
+        insert.run(name, description, content, now, now);
+      }
     }
   }
 

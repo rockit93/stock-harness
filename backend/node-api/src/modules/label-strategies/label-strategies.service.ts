@@ -1,8 +1,9 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { PythonCoreService } from "../quant/python-core.service";
+import { HttpDataSourceService } from "../quant/http-data-source.service";
 import { SettingsRepository } from "../settings/settings.repository";
 import { LabelStrategiesRepository, StrategyCondition } from "./label-strategies.repository";
-import { isMarketOpen } from "./market-hours";
+import { isTradingSession, MarketPhase } from "./market-hours";
 
 type FundamentalMetric = { key: string; value: number | null };
 type FundamentalPayload = { metrics?: FundamentalMetric[]; source?: string; period?: string };
@@ -17,6 +18,7 @@ export class LabelStrategiesService implements OnModuleInit, OnModuleDestroy {
     @Inject(LabelStrategiesRepository) private readonly repository: LabelStrategiesRepository,
     @Inject(SettingsRepository) private readonly settings: SettingsRepository,
     @Inject(PythonCoreService) private readonly pythonCore: PythonCoreService,
+    @Inject(HttpDataSourceService) private readonly httpSources: HttpDataSourceService,
   ) {}
 
   onModuleInit() {
@@ -38,6 +40,10 @@ export class LabelStrategiesService implements OnModuleInit, OnModuleDestroy {
 
   createStrategy(userId: number, body: Parameters<LabelStrategiesRepository["createStrategy"]>[1]) {
     return this.repository.createStrategy(userId, body);
+  }
+
+  updateStrategy(userId: number, id: number, body: Parameters<LabelStrategiesRepository["updateStrategy"]>[2]) {
+    return this.repository.updateStrategy(userId, id, body);
   }
 
   createStrategyFromTemplate(userId: number, key: string) {
@@ -89,7 +95,7 @@ export class LabelStrategiesService implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     try {
       for (const binding of this.repository.dueBindings()) {
-        if (!isMarketOpen(binding.market)) continue;
+        if (!isTradingSession(binding.market, binding.activeSessions as MarketPhase[])) continue;
         await this.executeBinding(binding);
       }
     } finally {
@@ -101,13 +107,16 @@ export class LabelStrategiesService implements OnModuleInit, OnModuleDestroy {
     const strategy = this.repository.getStrategy(binding.userId, binding.strategyId);
     const settings = this.settings.get(binding.userId);
     try {
-      const fundamentals = (await this.pythonCore.fundamentals({
+      const input = {
         market: binding.market,
         symbol: binding.symbol,
         data_source: settings.dataSource,
         futu_host: settings.futuHost,
         futu_port: settings.futuPort,
-      })) as FundamentalPayload;
+        provider_chains: Object.fromEntries(Object.entries(settings.providerChains).map(([market, chain]) => [market, chain.filter((key) => ["akshare", "baostock", "futu", "yfinance", "sec_edgar"].includes(key))])),
+      };
+      const custom = await this.httpSources.request(binding.userId, "fundamentals", input);
+      const fundamentals = (custom.data ?? await this.pythonCore.fundamentals(input)) as FundamentalPayload;
       const result = this.evaluate(strategy.conditions, fundamentals);
       this.repository.markResult(
         binding.userId,

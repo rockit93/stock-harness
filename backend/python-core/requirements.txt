@@ -3,6 +3,7 @@ pandas>=2.2
 numpy>=1.26
 plotly>=5.22
 akshare>=1.14
+baostock>=0.8.9
 backtrader>=1.9.78.123
 yfinance>=0.2.40
 requests>=2.32

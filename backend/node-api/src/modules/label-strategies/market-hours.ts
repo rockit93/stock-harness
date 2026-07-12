@@ -3,6 +3,8 @@ type MarketSchedule = {
   sessions: Array<[number, number]>;
 };
 
+export type MarketPhase = "pre_market" | "market" | "post_market";
+
 const MARKET_SCHEDULES: Record<string, MarketSchedule> = {
   "A Share": {
     timeZone: "Asia/Shanghai",
@@ -19,6 +21,10 @@ const MARKET_SCHEDULES: Record<string, MarketSchedule> = {
 };
 
 export function isMarketOpen(market: string, now = new Date()) {
+  return isTradingSession(market, ["market"], now);
+}
+
+export function isTradingSession(market: string, enabledPhases: MarketPhase[], now = new Date()) {
   const schedule = MARKET_SCHEDULES[market];
   if (!schedule) return false;
 
@@ -34,5 +40,12 @@ export function isMarketOpen(market: string, now = new Date()) {
   if (weekday === "Sat" || weekday === "Sun") return false;
 
   const minuteOfDay = Number(value("hour")) * 60 + Number(value("minute"));
-  return schedule.sessions.some(([start, end]) => minuteOfDay >= start && minuteOfDay < end);
+  const marketStart = schedule.sessions[0][0];
+  const marketEnd = schedule.sessions.at(-1)![1];
+  const phaseRanges: Record<MarketPhase, Array<[number, number]>> = {
+    pre_market: [[Math.max(0, marketStart - 120), marketStart]],
+    market: schedule.sessions,
+    post_market: [[marketEnd, Math.min(24 * 60, marketEnd + 240)]],
+  };
+  return enabledPhases.some((phase) => phaseRanges[phase]?.some(([start, end]) => minuteOfDay >= start && minuteOfDay < end));
 }

@@ -6,6 +6,8 @@ type RoleBody = {
   name?: string;
   responsibility?: string;
   systemPrompt?: string;
+  avatar?: string | null;
+  modelConfigId?: number | null;
 };
 
 @UseGuards(AuthGuard)
@@ -23,8 +25,13 @@ export class RolesController {
     return this.roles.create(Number(req.user.sub), body);
   }
 
+  @Put(":id")
+  update(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: RoleBody) {
+    return this.roles.update(Number(req.user.sub), Number(id), body);
+  }
+
   @Put(":id/capabilities")
-  updateCapabilities(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: { skillIds?: number[]; pluginIds?: number[] }) {
+  updateCapabilities(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: { skillIds?: number[]; pluginIds?: number[]; modelConfigId?: number | null }) {
     return this.roles.updateCapabilities(Number(req.user.sub), Number(id), body);
   }
 

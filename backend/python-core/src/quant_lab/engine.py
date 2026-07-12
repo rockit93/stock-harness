@@ -22,6 +22,8 @@ class TradeRecorder(bt.Analyzer):
             {
                 "entry_bar": trade.baropen,
                 "exit_bar": trade.barclose,
+                "entry_date": bt.num2date(trade.dtopen).date().isoformat(),
+                "exit_date": bt.num2date(trade.dtclose).date().isoformat(),
                 "entry_price": trade.price,
                 "exit_price": trade.data.close[0],
                 "size": trade.size,
@@ -46,6 +48,26 @@ class ValueRecorder(bt.Analyzer):
         return self.rows
 
 
+class OrderRecorder(bt.Analyzer):
+    def start(self):
+        self.rows = []
+
+    def notify_order(self, order):
+        if order.status != order.Completed:
+            return
+        self.rows.append({
+            "date": bt.num2date(order.executed.dt).date().isoformat(),
+            "side": "buy" if order.isbuy() else "sell",
+            "price": float(order.executed.price),
+            "size": abs(float(order.executed.size)),
+            "value": abs(float(order.executed.value)),
+            "commission": float(order.executed.comm),
+        })
+
+    def get_analysis(self):
+        return self.rows
+
+
 @dataclass(frozen=True)
 class BacktestResult:
     stats: BacktestStats
@@ -53,6 +75,7 @@ class BacktestResult:
     benchmark_equity: pd.Series
     drawdown: pd.Series
     trades: pd.DataFrame
+    orders: pd.DataFrame
 
 
 def _equity_from_analyzer(cerebro: bt.Cerebro, result, index: pd.Index) -> pd.Series:
@@ -115,6 +138,7 @@ def run_backtest(
     cerebro.addsizer(bt.sizers.PercentSizer, percents=95)
     cerebro.addanalyzer(ValueRecorder, _name="value")
     cerebro.addanalyzer(TradeRecorder, _name="trades")
+    cerebro.addanalyzer(OrderRecorder, _name="orders")
 
     runs = cerebro.run()
     strategy = runs[0]
@@ -128,6 +152,9 @@ def run_backtest(
     trades = pd.DataFrame(strategy.analyzers.trades.get_analysis())
     if trades.empty:
         trades = pd.DataFrame(columns=["entry_bar", "exit_bar", "entry_price", "exit_price", "size", "pnl", "pnl_pct"])
+    orders = pd.DataFrame(strategy.analyzers.orders.get_analysis())
+    if orders.empty:
+        orders = pd.DataFrame(columns=["date", "side", "price", "size", "value", "commission"])
 
     win_rate = 0.0 if trades.empty else float((trades["pnl"] > 0).mean())
     stats = BacktestStats(
@@ -149,4 +176,5 @@ def run_backtest(
         benchmark_equity=benchmark_equity,
         drawdown=drawdown,
         trades=trades,
+        orders=orders,
     )

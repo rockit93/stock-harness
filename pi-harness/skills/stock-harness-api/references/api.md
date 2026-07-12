@@ -51,6 +51,9 @@ Quant request fields are passed to Python Core. The Node API injects the current
 | PUT | `/agent-roles/:id/capabilities` | `skillIds`, `pluginIds` |
 | DELETE | `/agent-roles/:id` | none |
 | POST | `/pi/chat` | `roleId`, `message`; returns NDJSON |
+| GET | `/pi/tools` | List globally registered built-in tools |
+| PUT | `/pi/projects/:id/tools` | Assign project tools with `toolNames` |
+| PUT | `/pi/roles/:id/tools` | Assign role tools with `toolNames` |
 | GET, POST | `/pi/skills` | POST: `name`, `description`, `content` |
 | DELETE | `/pi/skills/:id` | none |
 | GET, POST | `/pi/plugins` | POST: `name`, `description`, `sourceUrl`, `code` |

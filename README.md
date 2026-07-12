@@ -212,8 +212,49 @@ STRATEGIES["my_strategy"] = StrategySpec(
 ```powershell
 ollama pull qwen2.5-coder:14b
 ollama pull glm4:9b
+ollama pull deepseek-r1:8b
 ```
+
+Pi 对话页选择 Ollama 模型配置后，会读取该 Ollama 实例中已安装的模型；可在“具体模型”中直接切换到 `deepseek-r1:8b`。
+系统会为每个用户初始化 Qwen 3 8B、Gemma 4 和 DeepSeek R1 8B 三个本地模型模板；用户可以独立选择默认模型、修改或删除自己的配置。
 
 ## 范围
 
 本项目仅用于量化研究和学习，不构成投资建议。实盘前必须补齐数据校验、滑点建模、风控、模拟盘、审计日志和券商接口。
+
+## 前端主题规范
+
+AlphaDock 提供三套界面主题，默认主题为 `midnight`：
+
+- `midnight`：深海量化，墨绿色深色主题。
+- `obsidian`：曜石终端，蓝黑色深色主题。
+- `daylight`：晨雾研究，浅色主题。
+
+主题状态保存在浏览器的 `alphadock-theme` 键中，并通过 `<html data-theme="...">` 和 `html.dark` 应用。主题变量与全局组件适配集中维护在：
+
+```text
+frontend/web/src/themes.css
+```
+
+开发新页面或组件时必须遵守以下规则：
+
+1. 业务组件使用 `--app-*` 变量，不直接写死页面背景、文字、边框和强调色。
+2. 常用变量包括 `--app-bg`、`--app-canvas`、`--app-surface`、`--app-surface-raised`、`--app-border`、`--app-text-strong`、`--app-text-secondary`、`--app-text-muted`、`--app-accent` 和 `--app-hover`。
+3. Arco Design 与 Element Plus 的主题覆盖统一写入 `themes.css`；不要在单个页面重复覆盖通用输入框、抽屉、表格或弹窗。
+4. 表格 hover 必须覆盖整行，包括固定列、斑马纹单元格和操作列。
+5. 深色主题正文与背景必须保持清晰对比；禁止在深色容器中遗留 `#fff`、`white`、`#f8fafc` 等浅色面板。
+6. 状态色可以固定，但普通品牌色、选择态和主按钮必须使用当前主题的 accent 变量。
+7. 每次新增或修改页面后，至少检查三套主题下的默认态、hover、focus、disabled、selected、drawer/modal 和空状态。
+
+提交前运行：
+
+```bash
+cd frontend/web
+npm run build
+```
+
+可使用下面的命令辅助审计硬编码颜色；结果需要人工判断，登录页插画、涨跌色等允许保留专用颜色：
+
+```bash
+rg -n "#[0-9a-fA-F]{3,8}|background:\\s*(white|#fff)" frontend/web/src
+```

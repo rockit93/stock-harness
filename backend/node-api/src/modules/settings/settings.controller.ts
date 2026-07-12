@@ -1,6 +1,7 @@
-import { BadGatewayException, Body, Controller, Delete, Get, Inject, Param, Post, Put, Req, UseGuards } from "@nestjs/common";
+import { BadGatewayException, Body, Controller, Delete, Get, Inject, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
 import { AuthGuard, AuthenticatedRequest } from "../auth/auth.guard";
-import { SettingsRepository, DataSourceSettings, ModelSettings } from "./settings.repository";
+import { SettingsRepository, DataSourceSettings, DisplaySettings, HttpDataSource, ModelSettings } from "./settings.repository";
+import { createHmac } from "node:crypto";
 
 @UseGuards(AuthGuard)
 @Controller("settings")
@@ -47,6 +48,46 @@ export class SettingsController {
     }
   }
 
+  @Get("display")
+  getDisplay(@Req() req: AuthenticatedRequest) {
+    return this.settings.getDisplay(Number(req.user.sub));
+  }
+
+  @Put("display")
+  saveDisplay(@Req() req: AuthenticatedRequest, @Body() body: Partial<DisplaySettings>) {
+    return this.settings.saveDisplay(Number(req.user.sub), body);
+  }
+
+  @Get("http-data-sources")
+  listHttpDataSources(@Req() req: AuthenticatedRequest) { return this.settings.listHttpDataSources(Number(req.user.sub)); }
+
+  @Post("http-data-sources")
+  createHttpDataSource(@Req() req: AuthenticatedRequest, @Body() body: HttpDataSource) { return this.settings.saveHttpDataSource(Number(req.user.sub), body); }
+
+  @Put("http-data-sources/:id")
+  updateHttpDataSource(@Req() req: AuthenticatedRequest, @Param("id") id: string, @Body() body: HttpDataSource) { return this.settings.saveHttpDataSource(Number(req.user.sub), { ...body, id: Number(id) }); }
+
+  @Delete("http-data-sources/:id")
+  deleteHttpDataSource(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.settings.deleteHttpDataSource(Number(req.user.sub), Number(id)); }
+
+  @Post("http-data-sources/test")
+  async testHttpDataSource(@Body() body: HttpDataSource) {
+    const headers: Record<string, string> = { ...(body.headers ?? {}) };
+    const config = body.authConfig ?? {};
+    const secret = config.secretRef ? process.env[config.secretRef] ?? "" : "";
+    if (body.authType === "api_key" && secret) headers[config.headerName || "x-api-key"] = secret;
+    if (body.authType === "bearer" && secret) headers.authorization = `Bearer ${secret}`;
+    if (body.authType === "hmac" && secret) {
+      const timestamp = String(Date.now());
+      headers[config.timestampHeader || "x-timestamp"] = timestamp;
+      headers[config.signatureHeader || "x-signature"] = createHmac(config.algorithm || "sha256", secret).update(timestamp).digest("hex");
+    }
+    const response = await fetch(String(body.baseUrl), { method: body.method === "POST" ? "POST" : "GET", headers, signal: AbortSignal.timeout(10_000) });
+    const text = await response.text();
+    if (!response.ok) throw new BadGatewayException(`HTTP ${response.status}: ${text.slice(0, 300)}`);
+    return { ok: true, message: `连接成功，HTTP ${response.status}`, sample: text.slice(0, 2000) };
+  }
+
   @Get("model")
   getModel(@Req() req: AuthenticatedRequest) {
     return this.settings.getModel(Number(req.user.sub));
@@ -71,8 +112,8 @@ export class SettingsController {
   deleteModelEntry(@Req() req: AuthenticatedRequest, @Param("id") id: string) { return this.settings.deleteModel(Number(req.user.sub), Number(id)); }
 
   @Get("model/available")
-  async getAvailableModels(@Req() req: AuthenticatedRequest) {
-    const settings = this.settings.getModel(Number(req.user.sub));
+  async getAvailableModels(@Req() req: AuthenticatedRequest, @Query("modelConfigId") modelConfigId?: string) {
+    const settings = this.settings.getModelById(Number(req.user.sub), Number(modelConfigId || 0));
     if (settings.provider !== "ollama") {
       return { provider: settings.provider, models: [settings.model].filter(Boolean) };
     }

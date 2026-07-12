@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -27,54 +27,25 @@ export type StrategyTemplate = {
 
 export type BindingBody = {
   subscriptionId?: number;
+  subscriptionIds?: number[];
   strategyId?: number;
   periodMinutes?: number;
+  scope?: "selected" | "single" | "all";
+  activeSessions?: TradingSession[];
 };
 
-export const DEFAULT_LABEL_STRATEGY_TEMPLATES: StrategyTemplate[] = [
-  {
-    key: "good-cash-compounder",
-    name: "高 ROE 现金牛",
-    targetLabel: "好公司",
-    description: "盈利质量较稳，ROE 较高且经营现金流为正。",
-    conditions: [
-      { metric: "roe", op: ">=", value: 0.15 },
-      { metric: "operating_cash_flow", op: ">", value: 0 },
-      { metric: "net_income", op: ">", value: 0 },
-    ],
-  },
-  {
-    key: "expensive-quality",
-    name: "高估值优质股",
-    targetLabel: "贵公司",
-    description: "质量不错，但 PE 已经不便宜，需要更高增长来消化估值。",
-    conditions: [
-      { metric: "roe", op: ">=", value: 0.15 },
-      { metric: "pe", op: ">=", value: 40 },
-      { metric: "net_income", op: ">", value: 0 },
-    ],
-  },
-  {
-    key: "danger-balance-sheet",
-    name: "高负债现金流压力",
-    targetLabel: "危险公司",
-    description: "负债率偏高，并且经营现金流或盈利表现不佳。",
-    conditions: [
-      { metric: "debt_ratio", op: ">=", value: 0.7 },
-      { metric: "operating_cash_flow", op: "<=", value: 0 },
-    ],
-  },
-  {
-    key: "cheap-with-caveat",
-    name: "低 PE 质量存疑",
-    targetLabel: "便宜但有坑的公司",
-    description: "PE 很低，但 ROE 偏弱，可能是价值陷阱，需要进一步排雷。",
-    conditions: [
-      { metric: "pe", op: "<=", value: 12 },
-      { metric: "roe", op: "<", value: 0.1 },
-    ],
-  },
-];
+export type TradingSession = "pre_market" | "market" | "post_market";
+
+const templatesDir = path.dirname(fileURLToPath(import.meta.url));
+const templateConfigPath = [
+  path.join(templatesDir, "label-strategy-templates.json"),
+  path.resolve(process.cwd(), "src/modules/label-strategies/label-strategy-templates.json"),
+  path.resolve(process.cwd(), "backend/node-api/src/modules/label-strategies/label-strategy-templates.json"),
+].find(existsSync);
+if (!templateConfigPath) throw new Error("Label strategy template config is missing");
+const CONFIGURED_LABEL_STRATEGY_TEMPLATES = JSON.parse(
+  readFileSync(templateConfigPath, "utf8"),
+) as StrategyTemplate[];
 
 type StrategyRow = {
   id: number;
@@ -93,6 +64,7 @@ type BindingRow = {
   subscription_id: number;
   strategy_id: number;
   period_minutes: number;
+  active_sessions_json: string;
   latest_label: string | null;
   latest_reason: string | null;
   latest_payload_json: string | null;
@@ -142,6 +114,7 @@ export class LabelStrategiesRepository {
         UNIQUE(user_id, subscription_id, strategy_id)
       );
     `);
+    this.ensureColumn("stock_label_strategy_bindings", "active_sessions_json", "TEXT NOT NULL DEFAULT '[\"market\"]'");
   }
 
   listStrategies(userId: number) {
@@ -157,11 +130,11 @@ export class LabelStrategiesRepository {
   }
 
   listTemplates() {
-    return DEFAULT_LABEL_STRATEGY_TEMPLATES;
+    return CONFIGURED_LABEL_STRATEGY_TEMPLATES;
   }
 
   createStrategyFromTemplate(userId: number, key: string) {
-    const template = DEFAULT_LABEL_STRATEGY_TEMPLATES.find((item) => item.key === key);
+    const template = CONFIGURED_LABEL_STRATEGY_TEMPLATES.find((item) => item.key === key);
     if (!template) throw new NotFoundException("策略模板不存在");
     return this.createStrategy(userId, {
       name: template.name,
@@ -190,6 +163,19 @@ export class LabelStrategiesRepository {
     return this.getStrategy(userId, Number(result.lastInsertRowid));
   }
 
+  updateStrategy(userId: number, id: number, body: StrategyBody) {
+    const current = this.getStrategy(userId, id);
+    const name = body.name === undefined ? current.name : String(body.name).trim();
+    const targetLabel = body.targetLabel === undefined ? current.targetLabel : String(body.targetLabel).trim();
+    const conditions = body.conditions === undefined ? current.conditions : this.normalizeConditions(body.conditions);
+    if (!name || !targetLabel || !conditions.length) throw new BadRequestException("策略名称、命中标签和条件不能为空");
+    const enabled = body.enabled === undefined ? current.enabled : Boolean(body.enabled);
+    this.db.prepare(
+      `UPDATE label_strategies SET name = ?, target_label = ?, conditions_json = ?, enabled = ?, updated_at = ? WHERE user_id = ? AND id = ?`,
+    ).run(name, targetLabel, JSON.stringify(conditions), enabled ? 1 : 0, new Date().toISOString(), userId, id);
+    return this.getStrategy(userId, id);
+  }
+
   removeStrategy(userId: number, id: number) {
     this.db.prepare("DELETE FROM stock_label_strategy_bindings WHERE user_id = ? AND strategy_id = ?").run(userId, id);
     this.db.prepare("DELETE FROM label_strategies WHERE user_id = ? AND id = ?").run(userId, id);
@@ -210,7 +196,7 @@ export class LabelStrategiesRepository {
   listBindings(userId: number) {
     const rows = this.db
       .prepare(
-        `SELECT b.id, b.user_id, b.subscription_id, b.strategy_id, b.period_minutes,
+        `SELECT b.id, b.user_id, b.subscription_id, b.strategy_id, b.period_minutes, b.active_sessions_json,
                 b.latest_label, b.latest_reason, b.latest_payload_json, b.last_run_at,
                 b.next_run_at, b.created_at,
                 s.name AS strategy_name, s.target_label,
@@ -243,27 +229,46 @@ export class LabelStrategiesRepository {
   }
 
   createBinding(userId: number, body: BindingBody) {
-    const subscriptionId = Number(body.subscriptionId);
     const strategyId = Number(body.strategyId);
     const periodMinutes = Number(body.periodMinutes ?? 1440);
-    if (!Number.isInteger(subscriptionId) || subscriptionId <= 0) throw new BadRequestException("订阅股票无效");
+    const scope = body.scope === "all" ? "all" : "selected";
+    const activeSessions = this.normalizeSessions(body.activeSessions);
     if (!Number.isInteger(strategyId) || strategyId <= 0) throw new BadRequestException("策略无效");
     if (!Number.isInteger(periodMinutes) || periodMinutes < 5) throw new BadRequestException("执行周期至少 5 分钟");
 
-    this.assertSubscription(userId, subscriptionId);
     this.getStrategy(userId, strategyId);
+    const subscriptions = this.db.prepare("SELECT id FROM subscriptions WHERE user_id = ? ORDER BY id").all(userId) as Array<{ id: number }>;
+    const requestedIds = body.subscriptionIds ?? (body.subscriptionId === undefined ? [] : [body.subscriptionId]);
+    const subscriptionIds = scope === "all"
+      ? subscriptions.map((subscription) => subscription.id)
+      : [...new Set(requestedIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!subscriptionIds.length) throw new BadRequestException(scope === "all" ? "暂无可应用的订阅股票" : "请至少选择一只订阅股票");
+    subscriptionIds.forEach((subscriptionId) => this.assertSubscription(userId, subscriptionId));
 
+    const placeholders = subscriptionIds.map(() => "?").join(", ");
+    this.db.prepare(
+      `DELETE FROM stock_label_strategy_bindings
+       WHERE user_id = ? AND strategy_id = ? AND subscription_id NOT IN (${placeholders})`,
+    ).run(userId, strategyId, ...subscriptionIds);
+    const bindings = subscriptionIds.map((subscriptionId) =>
+      this.upsertBinding(userId, subscriptionId, strategyId, periodMinutes, activeSessions),
+    );
+    return { scope, count: bindings.length, bindings };
+  }
+
+  private upsertBinding(userId: number, subscriptionId: number, strategyId: number, periodMinutes: number, activeSessions: TradingSession[]) {
     const now = new Date().toISOString();
     const result = this.db
       .prepare(
         `INSERT INTO stock_label_strategy_bindings
-         (user_id, subscription_id, strategy_id, period_minutes, next_run_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+         (user_id, subscription_id, strategy_id, period_minutes, active_sessions_json, next_run_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, subscription_id, strategy_id) DO UPDATE SET
            period_minutes = excluded.period_minutes,
+           active_sessions_json = excluded.active_sessions_json,
            next_run_at = excluded.next_run_at`,
       )
-      .run(userId, subscriptionId, strategyId, periodMinutes, now, now);
+      .run(userId, subscriptionId, strategyId, periodMinutes, JSON.stringify(activeSessions), now, now);
     const id = Number(result.lastInsertRowid) || this.findBindingId(userId, subscriptionId, strategyId);
     return this.getBinding(userId, id);
   }
@@ -275,7 +280,7 @@ export class LabelStrategiesRepository {
   getBinding(userId: number, id: number) {
     const row = this.db
       .prepare(
-        `SELECT b.id, b.user_id, b.subscription_id, b.strategy_id, b.period_minutes,
+        `SELECT b.id, b.user_id, b.subscription_id, b.strategy_id, b.period_minutes, b.active_sessions_json,
                 b.latest_label, b.latest_reason, b.latest_payload_json, b.last_run_at,
                 b.next_run_at, b.created_at,
                 s.name AS strategy_name, s.target_label,
@@ -293,7 +298,7 @@ export class LabelStrategiesRepository {
   dueBindings(limit = 20) {
     const rows = this.db
       .prepare(
-        `SELECT b.id, b.user_id, b.subscription_id, b.strategy_id, b.period_minutes,
+        `SELECT b.id, b.user_id, b.subscription_id, b.strategy_id, b.period_minutes, b.active_sessions_json,
                 b.latest_label, b.latest_reason, b.latest_payload_json, b.last_run_at,
                 b.next_run_at, b.created_at,
                 s.name AS strategy_name, s.target_label,
@@ -347,6 +352,18 @@ export class LabelStrategiesRepository {
     if (!row) throw new BadRequestException("订阅股票不存在");
   }
 
+  private normalizeSessions(input: TradingSession[] | undefined): TradingSession[] {
+    const valid = new Set<TradingSession>(["pre_market", "market", "post_market"]);
+    const sessions = [...new Set((input ?? ["market"]).filter((item): item is TradingSession => valid.has(item)))];
+    if (!sessions.length) throw new BadRequestException("至少选择一个生效时段");
+    return sessions;
+  }
+
+  private ensureColumn(table: string, column: string, definition: string) {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+  }
+
   private normalizeConditions(input: StrategyCondition[] | undefined) {
     const validMetrics = new Set(["revenue", "net_income", "roe", "operating_cash_flow", "pe", "debt_ratio", "dividend_yield"]);
     const validOps = new Set([">", ">=", "<", "<=", "==", "!="]);
@@ -379,6 +396,7 @@ export class LabelStrategiesRepository {
       subscriptionId: row.subscription_id,
       strategyId: row.strategy_id,
       periodMinutes: row.period_minutes,
+      activeSessions: JSON.parse(row.active_sessions_json || '["market"]') as TradingSession[],
       latestLabel: row.latest_label,
       latestReason: row.latest_reason,
       latestPayload: row.latest_payload_json ? JSON.parse(row.latest_payload_json) : null,

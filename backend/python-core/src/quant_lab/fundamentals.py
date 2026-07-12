@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
+import json
+from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -21,6 +24,8 @@ class FundamentalSnapshot:
     currency: str = ""
     period: str = ""
     source: str = "unknown"
+    sector: str = ""
+    industry: str = ""
 
 
 def _ticker_symbol(market: Market, symbol: str) -> str:
@@ -233,6 +238,19 @@ def _first_snapshot_value(frame: pd.DataFrame, names: tuple[str, ...]) -> float 
     return None
 
 
+def _first_snapshot_text(frame: pd.DataFrame, names: tuple[str, ...]) -> str:
+    if frame is None or frame.empty:
+        return ""
+    row = frame.iloc[0]
+    lower_columns = {str(column).lower(): column for column in frame.columns}
+    for name in names:
+        column = lower_columns.get(name.lower())
+        value = row.get(column) if column is not None else None
+        if value is not None and str(value).strip() and str(value).lower() != "nan":
+            return str(value).strip()
+    return ""
+
+
 def _load_futu_snapshot(market: Market, symbol: str, host: str, port: int) -> FundamentalSnapshot:
     from futu import FinancialProperty, OpenQuoteContext, RET_OK
 
@@ -295,6 +313,8 @@ def _load_futu_snapshot(market: Market, symbol: str, host: str, port: int) -> Fu
         currency=currency,
         period=period,
         source="futu",
+        sector=_first_snapshot_text(snapshot_frame, ("sector", "sector_name", "plate_name")),
+        industry=_first_snapshot_text(snapshot_frame, ("industry", "industry_name", "industry_type")),
     )
 
 
@@ -331,6 +351,59 @@ def _load_yfinance_snapshot(market: Market, symbol: str) -> FundamentalSnapshot:
         currency=str(info.get("financialCurrency") or info.get("currency") or ""),
         period=_latest_period(financials, cashflow, balance_sheet),
         source="yfinance",
+        sector=str(info.get("sector") or info.get("sectorDisp") or ""),
+        industry=str(info.get("industry") or info.get("industryDisp") or ""),
+    )
+
+
+def _sec_headers() -> dict[str, str]:
+    return {
+        "User-Agent": os.getenv("SEC_EDGAR_USER_AGENT", "stock-harness research@example.com"),
+    }
+
+
+def _sec_cik(symbol: str) -> str:
+    ticker = normalize_symbol(Market.US, symbol)
+    for item in _sec_json("https://www.sec.gov/files/company_tickers.json", 15).values():
+        if str(item.get("ticker", "")).upper() == ticker:
+            return str(item["cik_str"]).zfill(10)
+    raise RuntimeError(f"SEC EDGAR 未找到美股代码 {ticker}。")
+
+
+def _sec_json(url: str, timeout: int) -> dict[str, Any]:
+    request = Request(url, headers=_sec_headers())
+    with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _sec_fact(facts: dict[str, Any], tags: tuple[str, ...]) -> tuple[float | None, str]:
+    us_gaap = facts.get("facts", {}).get("us-gaap", {})
+    for tag in tags:
+        units = us_gaap.get(tag, {}).get("units", {})
+        candidates = units.get("USD", []) or units.get("USD/shares", []) or units.get("pure", [])
+        filings = [item for item in candidates if item.get("form") in {"10-K", "10-Q"} and item.get("val") is not None]
+        if filings:
+            latest = max(filings, key=lambda item: (item.get("end", ""), item.get("filed", "")))
+            return _finite(latest.get("val")), str(latest.get("end", ""))
+    return None, ""
+
+
+def _load_sec_edgar_snapshot(symbol: str) -> FundamentalSnapshot:
+    cik = _sec_cik(symbol)
+    facts = _sec_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json", 20)
+    revenue, revenue_period = _sec_fact(facts, ("RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"))
+    net_income, income_period = _sec_fact(facts, ("NetIncomeLoss", "ProfitLoss"))
+    operating_cash_flow, cash_period = _sec_fact(facts, ("NetCashProvidedByUsedInOperatingActivities",))
+    assets, assets_period = _sec_fact(facts, ("Assets",))
+    liabilities, _ = _sec_fact(facts, ("Liabilities",))
+    equity, _ = _sec_fact(facts, ("StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"))
+    return FundamentalSnapshot(
+        revenue=revenue, net_income=net_income,
+        roe=net_income / equity if net_income is not None and equity else None,
+        operating_cash_flow=operating_cash_flow,
+        debt_ratio=liabilities / assets if liabilities is not None and assets else None,
+        currency="USD", period=max(revenue_period, income_period, cash_period, assets_period),
+        source="sec_edgar",
     )
 
 
@@ -341,6 +414,8 @@ def _payload(market: Market, symbol: str, snapshot: FundamentalSnapshot, warning
         "ticker": _futu_code(market, symbol) if snapshot.source == "futu" else _ticker_symbol(market, symbol),
         "period": snapshot.period,
         "source": snapshot.source,
+        "sector": snapshot.sector,
+        "industry": snapshot.industry,
         "metrics": [
             _metric("revenue", "营收", snapshot.revenue, _format_money(snapshot.revenue, snapshot.currency)),
             _metric("net_income", "净利润", snapshot.net_income, _format_money(snapshot.net_income, snapshot.currency)),
@@ -362,7 +437,29 @@ def load_fundamentals(
     data_source: DataSource = DataSource.AUTO,
     futu_host: str = "127.0.0.1",
     futu_port: int = 11111,
+    provider_chains: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
+    if data_source != DataSource.FUTU:
+        defaults = {
+            Market.A_SHARE.value: ["futu", "yfinance"],
+            Market.HK.value: ["futu", "yfinance"],
+            Market.US.value: ["sec_edgar", "futu", "yfinance"],
+        }
+        allowed = {"futu", "yfinance", "sec_edgar"} if market == Market.US else {"futu", "yfinance"}
+        configured = (provider_chains or {}).get(market.value, [])
+        providers = [item for item in configured if item in allowed] or defaults[market.value]
+        errors = []
+        for provider in providers:
+            try:
+                snapshot = (_load_sec_edgar_snapshot(symbol) if provider == "sec_edgar" else
+                            _load_futu_snapshot(market, symbol, futu_host, futu_port) if provider == "futu" else
+                            _load_yfinance_snapshot(market, symbol))
+                warning = f"已从主数据源降级到 {provider}: {' | '.join(errors)}" if errors else None
+                return _payload(market, symbol, snapshot, warning=warning)
+            except Exception as exc:
+                errors.append(f"{provider}: {exc}")
+        raise RuntimeError(f"{market.value} 基本面主备数据源全部不可用: {' | '.join(errors)}")
+
     if data_source == DataSource.FUTU:
         return _payload(market, symbol, _load_futu_snapshot(market, symbol, futu_host, futu_port))
 
