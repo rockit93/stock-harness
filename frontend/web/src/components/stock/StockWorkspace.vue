@@ -20,6 +20,7 @@ const range = ref("year");
 const interval = ref("1d");
 const chartNode = ref(null);
 let chart;
+let refreshTimer;
 
 const marketName = computed(() => ({ "A Share": "A 股", "Hong Kong": "港股", US: "美股" })[props.market] || props.market);
 const hitLabels = computed(() => [...new Set(props.labels.map((item) => item.latestLabel).filter(Boolean))]);
@@ -71,8 +72,21 @@ async function load() {
   }
 }
 
-watch(() => [props.market, props.symbol, range.value, interval.value], load, { immediate: true });
-onBeforeUnmount(() => { if (chart) dispose(chart); });
+function startRefreshTimer() {
+  if (refreshTimer) window.clearInterval(refreshTimer);
+  if (["1m", "15m", "30m", "1h", "4h"].includes(interval.value)) {
+    refreshTimer = window.setInterval(load, 15_000);
+  }
+}
+
+watch(() => [props.market, props.symbol, range.value, interval.value], async () => {
+  startRefreshTimer();
+  await load();
+}, { immediate: true });
+onBeforeUnmount(() => {
+  if (chart) dispose(chart);
+  if (refreshTimer) window.clearInterval(refreshTimer);
+});
 </script>
 
 <template>
@@ -91,10 +105,10 @@ onBeforeUnmount(() => { if (chart) dispose(chart); });
 
     <div class="stock-layout">
       <a-card class="stock-chart-card" :bordered="false">
-        <template #title><div class="stock-chart-title"><div><strong>K 线与成交量</strong><small>{{ marketName }} · {{ symbol }}</small></div></div></template>
+        <template #title><div class="stock-chart-title"><strong>K 线与成交量</strong><small>{{ marketName }} · {{ symbol }}</small></div></template>
         <div class="stock-chart-toolbar">
-          <a-radio-group v-model="range" type="button" size="small"><a-radio value="month">近一月</a-radio><a-radio value="halfYear">近半年</a-radio><a-radio value="year">近一年</a-radio></a-radio-group>
-          <a-select v-model="interval" size="small" class="stock-interval-select"><a-option value="1d">日 K</a-option><a-option value="1w">周 K</a-option><a-option value="1mo">月 K</a-option></a-select>
+          <a-radio-group v-model="range" type="button" size="small"><a-radio value="day">日</a-radio><a-radio value="week">周</a-radio><a-radio value="month">月</a-radio><a-radio value="halfYear">半年</a-radio><a-radio value="year">年</a-radio></a-radio-group>
+          <a-select v-model="interval" size="small" class="stock-interval-select"><a-option value="1m">1 分</a-option><a-option value="15m">15 分</a-option><a-option value="30m">30 分</a-option><a-option value="1h">1 时</a-option><a-option value="4h">4 时</a-option><a-option value="1d">日 K</a-option><a-option value="1w">周 K</a-option><a-option value="1mo">月 K</a-option></a-select>
         </div>
         <div v-if="bars.length" ref="chartNode" class="stock-kline"></div><a-empty v-else description="暂无 K 线数据" />
       </a-card>
@@ -114,7 +128,7 @@ onBeforeUnmount(() => { if (chart) dispose(chart); });
 
 <style scoped>
 .stock-workspace{display:grid;gap:16px;padding-bottom:36px}.stock-hero{display:flex;align-items:center;justify-content:space-between;gap:20px;border:1px solid var(--app-border);border-radius:14px;padding:20px 22px;background:linear-gradient(135deg,var(--app-surface),var(--app-surface-raised));box-shadow:0 12px 32px var(--app-shadow)}.stock-hero h1{margin:6px 0 2px;color:var(--app-text-strong);font-size:26px}.stock-hero h1 small{margin-left:8px;color:var(--app-text-muted);font-size:14px}.stock-hero p{margin:0;color:var(--app-text-muted)}.stock-market{border-radius:999px;padding:3px 9px;background:var(--app-accent-bg);color:var(--app-accent-soft);font-size:12px}.quote-summary{display:grid;min-width:145px;text-align:right}.quote-summary small,.quote-summary span{color:var(--app-text-muted)}.quote-summary strong{color:var(--app-text-strong);font-size:30px}.stock-metrics{display:grid;grid-template-columns:repeat(7,minmax(120px,1fr));gap:10px;overflow:auto}.stock-metrics article{display:grid;gap:4px;border:1px solid var(--app-border);border-radius:10px;padding:12px;background:var(--app-surface)}.stock-metrics small{color:var(--app-text-muted)}.stock-metrics strong{color:var(--app-text-strong)}.stock-layout{display:grid;grid-template-columns:minmax(0,2.25fr) minmax(300px,.75fr);gap:16px}.stock-side,.stock-bottom-grid{display:grid;gap:16px}.stock-bottom-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.stock-workspace :deep(.arco-card){border:1px solid var(--app-border);border-radius:12px;background:var(--app-surface)}.card-title{display:flex;align-items:center;justify-content:space-between;gap:12px}.card-title>div{display:grid;gap:3px}.card-title small{color:var(--app-text-muted)}.stock-kline{width:100%;height:610px;overflow:hidden;border:1px solid var(--app-border);border-radius:10px;background:var(--app-surface)}
-.stock-chart-card :deep(.arco-card-header-title){width:100%;min-width:0}.stock-chart-title{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-width:0;margin:0}.stock-chart-title>div{display:grid;gap:3px}.stock-chart-title small{color:var(--app-text-muted)}.stock-chart-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;border:1px solid var(--app-border);border-radius:9px;padding:7px 9px;background:var(--app-surface-raised)}.stock-interval-select{width:100px;flex:0 0 100px}
+.stock-chart-card :deep(.arco-card-header-title){width:100%;min-width:0}.stock-chart-title{display:flex;align-items:baseline;gap:12px;width:100%;min-width:0;margin:0}.stock-chart-title small{color:var(--app-text-muted);font-weight:400}.stock-chart-toolbar{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-bottom:12px;border:1px solid var(--app-border);border-radius:9px;padding:7px 9px;background:var(--app-surface-raised)}.stock-chart-toolbar :deep(.arco-radio-group){display:flex;flex:0 0 auto;flex-wrap:nowrap}.stock-chart-toolbar :deep(.arco-radio-button),.stock-chart-toolbar :deep(.arco-radio-button-content){white-space:nowrap}.stock-interval-select{width:84px;flex:0 0 84px}
 @media(max-width:980px){.stock-layout{grid-template-columns:1fr}.stock-side{grid-template-columns:repeat(2,minmax(0,1fr))}.stock-metrics{grid-template-columns:repeat(4,minmax(120px,1fr))}}
-@media(max-width:700px){.stock-hero{align-items:flex-start;flex-direction:column}.quote-summary{text-align:left}.stock-side,.stock-bottom-grid{grid-template-columns:1fr}.stock-chart-title{align-items:flex-start;flex-direction:column}.stock-chart-toolbar{align-items:stretch;flex-direction:column}.stock-chart-toolbar :deep(.arco-radio-group){display:flex}.stock-chart-toolbar :deep(.arco-radio-button){flex:1;text-align:center}.stock-interval-select{width:100%;flex-basis:auto}.stock-kline{height:480px}}
+@media(max-width:700px){.stock-hero{align-items:flex-start;flex-direction:column}.quote-summary{text-align:left}.stock-side,.stock-bottom-grid{grid-template-columns:1fr}.stock-chart-title{flex-wrap:wrap}.stock-chart-toolbar{align-items:flex-start;flex-wrap:wrap}.stock-chart-toolbar :deep(.arco-radio-group){max-width:100%;overflow-x:auto}.stock-chart-toolbar :deep(.arco-radio-button){flex:1 0 auto;text-align:center}.stock-interval-select{width:84px;flex-basis:84px}.stock-kline{height:480px}}
 </style>

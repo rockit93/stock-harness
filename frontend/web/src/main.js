@@ -21,6 +21,7 @@ import SubscriptionTable from "./components/dashboard/SubscriptionTable.vue";
 import SubscriptionDrawer from "./components/dashboard/SubscriptionDrawer.vue";
 import StockWorkspace from "./components/stock/StockWorkspace.vue";
 import StockLink from "./components/stock/StockLink.vue";
+import HoldingsWorkbench from "./components/holdings/HoldingsWorkbench.vue";
 import { findPrimaryKey, primaryNavigation } from "./navigation.js";
 import { chartThemeStyles } from "./chartTheme.js";
 import { PI_RUNTIME_PROVIDER, PiRuntimeProvider } from "./piLlmProvider.js";
@@ -200,7 +201,7 @@ const roleColumns = [
 ];
 
 const app = createApp({
-  components: { AppShell, BacktestForm, BacktestResults, BacktestStrategyManager, BubbleList, Thinking, RichChatComposer, DashboardViewControls, StockChartControls, SubscriptionTable, SubscriptionDrawer, StockWorkspace, StockLink, IconStar, IconStarFill },
+  components: { AppShell, BacktestForm, BacktestResults, BacktestStrategyManager, HoldingsWorkbench, BubbleList, Thinking, RichChatComposer, DashboardViewControls, StockChartControls, SubscriptionTable, SubscriptionDrawer, StockWorkspace, StockLink, IconStar, IconStarFill },
   data() {
     return {
       token: localStorage.getItem("stock-harness-token") ?? sessionStorage.getItem("stock-harness-token") ?? "",
@@ -237,8 +238,8 @@ const app = createApp({
         dataSource: "auto",
         providerChains: {
           "A Share": ["akshare", "baostock", "yfinance"],
-          "Hong Kong": ["futu", "akshare", "yfinance"],
-          US: ["sec_edgar", "futu", "yfinance"],
+          "Hong Kong": ["futu", "akshare", "tushare", "yfinance"],
+          US: ["sec_edgar", "futu", "tushare", "yfinance"],
         },
         futuHost: "127.0.0.1",
         futuPort: 11111,
@@ -260,7 +261,7 @@ const app = createApp({
       imGatewayRefreshing: false,
       httpDataSources: [],
       dataSourceDrawerOpen: false,
-      dataSourceRoutingOpen: false,
+      dataSourceRouteDrag: null,
       dataSourceTesting: false,
       dataSourceTestMessage: "",
       httpDataSourceForm: { id: null, name: "", key: "", baseUrl: "https://", method: "GET", authType: "none", authConfig: { secretRef: "", headerName: "x-api-key", signatureHeader: "x-signature", timestampHeader: "x-timestamp", algorithm: "sha256" }, headersText: "{}", markets: ["A Share"], capabilities: ["bars"], adapterScript: "function adapt(payload) {\n  return (payload.data || []).map(item => ({\n    date: item.date, open: Number(item.open), high: Number(item.high),\n    low: Number(item.low), close: Number(item.close), volume: Number(item.volume || 0)\n  }));\n}" },
@@ -464,7 +465,7 @@ const app = createApp({
       const builtins = [
         { key: "akshare", name: "AkShare", protocol: "Python SDK", authType: "none", markets: ["A Share", "Hong Kong"], capabilities: ["bars", "symbols", "fundamentals"], enabled: true, builtin: true },
         { key: "baostock", name: "BaoStock", protocol: "Python SDK", authType: "none", markets: ["A Share"], capabilities: ["bars"], enabled: true, builtin: true },
-        { key: "tushare", name: "Tushare Pro", protocol: "Python SDK", authType: "token", markets: ["A Share"], capabilities: ["bars"], enabled: true, builtin: true },
+        { key: "tushare", name: "Tushare Pro", protocol: "Python SDK", authType: "token", markets: ["A Share", "Hong Kong", "US"], capabilities: ["bars"], enabled: true, builtin: true },
         { key: "futu", name: "Futu OpenD", protocol: "TCP / OpenD", authType: "none", markets: ["A Share", "Hong Kong", "US"], capabilities: ["bars", "quote", "fundamentals"], enabled: true, builtin: true },
         { key: "yfinance", name: "Yahoo Finance", protocol: "HTTP", authType: "none", markets: ["A Share", "Hong Kong", "US"], capabilities: ["bars", "fundamentals"], enabled: true, builtin: true },
         { key: "sec_edgar", name: "SEC EDGAR", protocol: "HTTP", authType: "none", markets: ["US"], capabilities: ["fundamentals"], enabled: true, builtin: true },
@@ -830,6 +831,39 @@ const app = createApp({
       try { const result = await this.api("/data-sources/test", { method: "POST", body: JSON.stringify(this.httpDataSourcePayload()) }); this.dataSourceTestMessage = result.message; } catch (error) { this.dataSourceTestMessage = error instanceof Error ? error.message : String(error); } finally { this.dataSourceTesting = false; }
     },
     async removeHttpDataSource(source) { await this.api(`/settings/http-data-sources/${source.id}`, { method: "DELETE" }); await this.loadHttpDataSources(); },
+    providerSource(key) {
+      return this.allDataSources.find((source) => source.key === key) ?? { key, name: key, protocol: "" };
+    },
+    availableProviders(market) {
+      const selected = new Set(this.dataSourceSettings.providerChains?.[market] ?? []);
+      return this.allDataSources.filter((source) => source.markets.includes(market) && !selected.has(source.key));
+    },
+    addProviderToChain(market, key) {
+      if (!key) return;
+      const chain = this.dataSourceSettings.providerChains[market] ?? [];
+      if (!chain.includes(key)) this.dataSourceSettings.providerChains[market] = [...chain, key];
+    },
+    removeProviderFromChain(market, index) {
+      this.dataSourceSettings.providerChains[market] = (this.dataSourceSettings.providerChains[market] ?? []).filter((_, itemIndex) => itemIndex !== index);
+    },
+    moveProviderInChain(market, fromIndex, toIndex) {
+      const chain = [...(this.dataSourceSettings.providerChains[market] ?? [])];
+      if (fromIndex < 0 || fromIndex >= chain.length || toIndex < 0 || toIndex >= chain.length || fromIndex === toIndex) return;
+      const [provider] = chain.splice(fromIndex, 1);
+      chain.splice(toIndex, 0, provider);
+      this.dataSourceSettings.providerChains[market] = chain;
+    },
+    startProviderDrag(market, index, event) {
+      this.dataSourceRouteDrag = { market, index };
+      if (event?.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", `${market}:${index}`);
+      }
+    },
+    dropProvider(market, index) {
+      if (this.dataSourceRouteDrag?.market === market) this.moveProviderInChain(market, this.dataSourceRouteDrag.index, index);
+      this.dataSourceRouteDrag = null;
+    },
     async loadModelSettings() {
       this.modelConfigs = await this.api("/settings/models");
       this.modelSettings = this.modelConfigs.find((item) => item.isDefault) ?? this.modelConfigs[0] ?? await this.api("/settings/model");
@@ -868,6 +902,7 @@ const app = createApp({
       }
     },
     formatModelSize(bytes) { return bytes ? `${(Number(bytes) / 1024 / 1024 / 1024).toFixed(1)} GB` : "—"; },
+    modelCapabilityLabel(config) { return inferModelCapabilities(config).images ? "视觉" : "文本"; },
     async loadModelMonitoring() {
       this.monitoringLoading = true;
       try {
@@ -2557,6 +2592,8 @@ const app = createApp({
           <StockWorkspace :market="marketFromRouteSegment($route.params.market)" :symbol="String($route.params.symbol || '').toUpperCase()" :stock="routedStock" :labels="routedStock ? subscriptionLabels[String(routedStock.id)] || [] : []" :request="api" :market-colors="displaySettings.marketColors" />
         </section>
 
+        <section v-if="activeModule === 'holdings'" class="module-panel"><HoldingsWorkbench :request="api" :models="modelConfigs" :private-models="systemPrivateModels" /></section>
+
         <section v-if="activeModule === 'dashboard'" class="module-panel">
           <div class="dashboard-view-toolbar">
             <DashboardViewControls :view-mode="dashboardViewMode" :columns="dashboardColumns" @update:view-mode="setDashboardView" @update:columns="setDashboardColumns" />
@@ -3301,21 +3338,46 @@ const app = createApp({
         </section>
 
         <section v-if="activeModule === 'data-sources'" class="module-panel data-source-management">
-          <div class="panel-head"><div><h2>数据源管理</h2><p>统一注册、认证、适配和编排行情数据服务。</p></div><a-space><a-button @click="dataSourceRoutingOpen = true">市场路由配置</a-button><a-button type="primary" @click="openHttpDataSource()">新建 HTTP 数据源</a-button></a-space></div>
+          <div class="panel-head"><div><h2>数据源管理</h2><p>按市场管理数据源；拖动表格行即可调整主备优先级。</p></div><a-space><a-button @click="openHttpDataSource()">新建 HTTP 数据源</a-button><a-button type="primary" :loading="settingsSaving" @click="saveDataSourceSettings">保存配置</a-button></a-space></div>
           <div class="data-source-stats"><a-card><a-statistic title="全部数据源" :value="allDataSources.length" /></a-card><a-card><a-statistic title="自定义 HTTP" :value="httpDataSources.length" /></a-card><a-card><a-statistic title="已启用" :value="allDataSources.filter(item => item.enabled).length" /></a-card><a-card><a-statistic title="支持市场" :value="3" /></a-card></div>
-          <a-card class="data-source-table-card">
-            <a-table :data="allDataSources" row-key="key" :pagination="false" :bordered="false">
-              <template #columns>
-                <a-table-column title="数据源" :width="220"><template #cell="{ record }"><div class="source-name"><span class="source-logo">{{ record.name.slice(0, 1) }}</span><div><strong>{{ record.name }}</strong><small>{{ record.key }}</small></div></div></template></a-table-column>
-                <a-table-column title="协议" :width="130" data-index="protocol" />
-                <a-table-column title="认证" :width="130"><template #cell="{ record }"><a-tag>{{ {none:'无需认证',token:'Token',api_key:'API Key',bearer:'Bearer',hmac:'HMAC 签名'}[record.authType] || record.authType }}</a-tag></template></a-table-column>
-                <a-table-column title="市场" :width="230"><template #cell="{ record }"><a-space wrap><a-tag v-for="market in record.markets" :key="market">{{ marketLabel(market) }}</a-tag></a-space></template></a-table-column>
-                <a-table-column title="数据能力"><template #cell="{ record }"><a-space wrap><a-tag v-for="capability in record.capabilities" :key="capability" color="arcoblue">{{ {bars:'K 线',quote:'实时报价',symbols:'标的搜索',fundamentals:'基本面'}[capability] || capability }}</a-tag></a-space></template></a-table-column>
-                <a-table-column title="状态" :width="100"><template #cell="{ record }"><a-badge :status="record.enabled ? 'success' : 'default'" :text="record.enabled ? '已启用' : '已停用'" /></template></a-table-column>
-                <a-table-column title="操作" :width="180" fixed="right"><template #cell="{ record }"><a-space v-if="!record.builtin"><a-button type="text" size="small" @click="openHttpDataSource(record)">编辑</a-button><a-popconfirm content="确定删除该数据源吗？" @ok="removeHttpDataSource(record)"><a-button type="text" status="danger" size="small">删除</a-button></a-popconfirm></a-space><a-tag v-else>系统内置</a-tag></template></a-table-column>
-              </template>
-            </a-table>
-          </a-card>
+          <section v-for="market in ['A Share','Hong Kong','US']" :key="market" class="market-source-section">
+            <div class="market-source-heading"><div><h3>{{ marketLabel(market) }}数据源</h3><p>按优先级从上到下调用；按住左侧手柄拖动整行排序。</p></div><a-tag>{{ dataSourceSettings.providerChains[market]?.length || 0 }} 个已编排</a-tag></div>
+            <div class="market-source-table-wrap">
+              <table class="market-source-table">
+                <thead><tr><th class="drag-column"></th><th class="rank-column">优先级</th><th>数据源</th><th>协议 / 认证</th><th>数据能力</th><th>状态</th><th class="action-column">操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="(providerKey, index) in dataSourceSettings.providerChains[market]" :key="providerKey" draggable="true" :class="{ dragging: dataSourceRouteDrag?.market === market && dataSourceRouteDrag?.index === index }" @dragstart="startProviderDrag(market, index, $event)" @dragend="dataSourceRouteDrag = null" @dragover.prevent @drop.prevent="dropProvider(market, index)">
+                    <td><span class="route-drag-handle" title="拖拽调整优先级" aria-label="拖拽调整优先级">⠿</span></td>
+                    <td><span class="route-rank">{{ index + 1 }}</span><a-tag v-if="index === 0" color="green" size="small">主源</a-tag><small v-else>备用 {{ index }}</small></td>
+                    <td><div class="source-name"><span class="source-logo">{{ providerSource(providerKey).name.slice(0, 1) }}</span><div><strong>{{ providerSource(providerKey).name }}</strong><small>{{ providerKey }}</small></div></div></td>
+                    <td><strong class="source-protocol">{{ providerSource(providerKey).protocol }}</strong><small>{{ {none:'无需认证',token:'Token',api_key:'API Key',bearer:'Bearer',hmac:'HMAC 签名'}[providerSource(providerKey).authType] || providerSource(providerKey).authType }}</small></td>
+                    <td><a-space wrap><a-tag v-for="capability in providerSource(providerKey).capabilities" :key="capability" color="arcoblue">{{ {bars:'K 线',quote:'实时报价',symbols:'标的搜索',fundamentals:'基本面'}[capability] || capability }}</a-tag></a-space></td>
+                    <td><a-badge :status="providerSource(providerKey).enabled ? 'success' : 'default'" :text="providerSource(providerKey).enabled ? '已启用' : '已停用'" /></td>
+                    <td><a-space><a-button v-if="index > 0" type="text" size="small" @click="moveProviderInChain(market, index, 0)">设为主源</a-button><a-button v-if="!providerSource(providerKey).builtin" type="text" size="small" @click="openHttpDataSource(providerSource(providerKey))">编辑</a-button><a-button type="text" status="danger" size="small" @click="removeProviderFromChain(market, index)">移出</a-button></a-space></td>
+                  </tr>
+                  <tr v-if="!dataSourceSettings.providerChains[market]?.length" class="empty-row"><td colspan="7">尚未为{{ marketLabel(market) }}配置数据源</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="market-source-add"><a-select :model-value="undefined" :disabled="!availableProviders(market).length" :placeholder="availableProviders(market).length ? '添加支持' + marketLabel(market) + '的数据源' : '已添加全部可用数据源'" @change="addProviderToChain(market, $event)"><a-option v-for="source in availableProviders(market)" :key="source.key" :value="source.key">{{ source.name }} · {{ source.protocol }}</a-option></a-select></div>
+          </section>
+
+          <section class="system-source-config">
+            <div class="market-source-heading"><div><h3>系统数据源配置</h3><p>配置本机数据服务连接与认证凭据，保存后应用到所有市场。</p></div></div>
+            <div class="system-source-config-grid">
+              <a-card class="source-config-card" title="Futu OpenD 连接">
+                <p class="source-config-description">连接本机或局域网中的 OpenD 行情代理服务。</p>
+                <a-form layout="vertical"><div class="form-row"><a-form-item label="Host"><a-input v-model="dataSourceSettings.futuHost" placeholder="127.0.0.1" /></a-form-item><a-form-item label="Port"><a-input-number v-model="dataSourceSettings.futuPort" :min="1" :max="65535" /></a-form-item></div></a-form>
+              </a-card>
+              <a-card class="source-config-card" title="Tushare Pro 认证">
+                <p class="source-config-description">Token 加密保存在 AlphaDock 服务端，保存后不再回显。</p>
+                <a-form layout="vertical"><a-form-item label="Token" :extra="dataSourceSettings.hasTushareToken ? '已保存 Token；留空表示继续使用原 Token。' : '请输入 tushare.pro 用户 Token。'"><a-input-password v-model="dataSourceSettings.tushareToken" placeholder="请输入 Tushare Pro Token" allow-clear /></a-form-item></a-form>
+                <a-alert v-if="dataSourceTestMessage" :type="dataSourceTestMessage.includes('成功') ? 'success' : 'warning'">{{ dataSourceTestMessage }}</a-alert>
+                <a-button :loading="dataSourceTesting" @click="testTushareConnection">测试 Tushare 连接</a-button>
+              </a-card>
+            </div>
+            <div class="system-source-config-footer"><span>优先级、连接地址和认证信息将统一保存。</span><a-button type="primary" :loading="settingsSaving" @click="saveDataSourceSettings">保存全部配置</a-button></div>
+          </section>
 
           <a-drawer v-model:visible="dataSourceDrawerOpen" :title="httpDataSourceForm.id ? '编辑 HTTP 数据源' : '新建 HTTP 数据源'" :width="760" :footer="false" unmount-on-close>
             <a-form :model="httpDataSourceForm" layout="vertical">
@@ -3331,19 +3393,6 @@ const app = createApp({
             </a-form>
           </a-drawer>
 
-          <a-drawer v-model:visible="dataSourceRoutingOpen" title="市场数据源路由" :width="620" :footer="false">
-            <a-alert type="info">系统按照从左到右的顺序调用，失败后自动降级到下一数据源。</a-alert>
-            <a-form layout="vertical" class="routing-form">
-              <a-form-item v-for="market in ['A Share','Hong Kong','US']" :key="market" :label="marketLabel(market) + '主备顺序'"><a-select v-model="dataSourceSettings.providerChains[market]" multiple><a-option v-for="source in allDataSources.filter(item => item.markets.includes(market))" :key="source.key" :value="source.key">{{ source.name }}</a-option></a-select></a-form-item>
-              <template v-if="usesFutuSource()"><div class="form-row"><a-form-item label="Futu Host"><a-input v-model="dataSourceSettings.futuHost" /></a-form-item><a-form-item label="Futu Port"><a-input-number v-model="dataSourceSettings.futuPort" :min="1" :max="65535" /></a-form-item></div></template>
-              <a-card v-if="usesTushareSource()" class="auth-config-card" title="Tushare Pro 认证">
-                <a-form-item label="Token" :extra="dataSourceSettings.hasTushareToken ? 'Token 已安全保存；留空表示继续使用原 Token。' : 'Token 将加密保存在 AlphaDock 服务器中，保存后不再回显。'"><a-input-password v-model="dataSourceSettings.tushareToken" placeholder="请输入 tushare.pro 用户 Token" allow-clear /></a-form-item>
-                <a-alert v-if="dataSourceTestMessage" :type="dataSourceTestMessage.includes('成功') ? 'success' : 'warning'">{{ dataSourceTestMessage }}</a-alert>
-                <a-button :loading="dataSourceTesting" @click="testTushareConnection">测试 Tushare 连接</a-button>
-              </a-card>
-              <a-button type="primary" long :loading="settingsSaving" @click="saveDataSourceSettings">保存路由配置</a-button>
-            </a-form>
-          </a-drawer>
         </section>
 
         <section v-if="activeModule === 'im-connectors'" class="module-panel im-connectors-page">
@@ -3413,7 +3462,7 @@ const app = createApp({
           <div class="monitoring-kpis">
             <a-card><small>Token 总消耗</small><strong>{{ formatTokenCount(modelMonitoring.summary.totalTokens) }}</strong><span>输入 {{ formatTokenCount(modelMonitoring.summary.promptTokens) }} · 输出 {{ formatTokenCount(modelMonitoring.summary.completionTokens) }}</span></a-card>
             <a-card><small>模型调用</small><strong>{{ modelMonitoring.summary.calls || 0 }}</strong><span>成功率 {{ modelMonitoring.summary.successRate ?? 100 }}%</span></a-card>
-            <a-card><small>对话数量</small><strong>{{ modelMonitoring.summary.conversations || 0 }}</strong><span>{{ modelMonitoring.summary.turns || 0 }} 个用户消息轮次</span></a-card>
+            <a-card><small>对话数量</small><strong>{{ modelMonitoring.summary.conversations || 0 }}</strong><span>累计提问 {{ modelMonitoring.summary.turns || 0 }} 次</span></a-card>
             <a-card><small>平均响应</small><strong>{{ modelMonitoring.summary.averageLatencyMs ? (modelMonitoring.summary.averageLatencyMs / 1000).toFixed(1) + 's' : '—' }}</strong><span>每次底层模型请求</span></a-card>
           </div>
           <div class="monitoring-grid">
@@ -3454,6 +3503,7 @@ const app = createApp({
             <a-table :data="systemPrivateModels" row-key="model" :pagination="false" :bordered="false">
               <template #columns>
                 <a-table-column title="模型"><template #cell="{ record }"><div class="source-name"><span class="source-logo model-logo">私</span><div><strong>{{ record.model }}</strong><small>Ollama 本地部署</small></div></div></template></a-table-column>
+                <a-table-column title="能力" :width="110"><template #cell="{ record }"><a-tag :color="record.supportsVision ? 'purple' : 'gray'">{{ record.supportsVision ? '视觉' : '文本' }}</a-tag></template></a-table-column>
                 <a-table-column title="模型服务地址（IP / Port）" :width="420"><template #cell="{ record }"><a-input v-model="record.baseUrl" :disabled="currentUser?.role !== 'admin'" placeholder="http://192.168.1.10:11434"><template #append><a-button v-if="currentUser?.role === 'admin'" type="text" @click="savePrivateModelEndpoint(record)">保存</a-button></template></a-input></template></a-table-column>
                 <a-table-column title="磁盘占用" :width="140"><template #cell="{ record }">{{ formatModelSize(record.size) }}</template></a-table-column>
                 <a-table-column title="状态" :width="130"><template #cell="{ record }"><a-badge :status="record.enabled ? 'success' : 'normal'" :text="record.enabled ? '已启用' : '已禁用'" /></template></a-table-column>
@@ -3465,6 +3515,7 @@ const app = createApp({
             <a-table :data="modelConfigs" row-key="id" :pagination="false" :bordered="false">
               <template #columns>
                 <a-table-column title="模型配置" :width="250"><template #cell="{ record }"><div class="source-name"><span class="source-logo model-logo">{{ record.provider === 'ollama' ? '私' : '云' }}</span><div><strong>{{ record.name }}</strong><small>{{ record.model }}</small></div></div></template></a-table-column>
+                <a-table-column title="能力" :width="110"><template #cell="{ record }"><a-tag :color="modelCapabilityLabel(record) === '视觉' ? 'purple' : 'gray'">{{ modelCapabilityLabel(record) }}</a-tag></template></a-table-column>
                 <a-table-column title="部署方式" :width="130"><template #cell="{ record }"><a-tag :color="record.provider === 'ollama' ? 'green' : 'arcoblue'">{{ modelDeploymentLabel(record) }}</a-tag></template></a-table-column>
                 <a-table-column title="提供方" :width="190"><template #cell="{ record }">{{ modelProviderLabel(record.provider) }}</template></a-table-column>
                 <a-table-column title="服务地址"><template #cell="{ record }"><span class="model-endpoint">{{ record.baseUrl }}</span></template></a-table-column>

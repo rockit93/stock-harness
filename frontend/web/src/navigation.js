@@ -7,6 +7,7 @@ export const primaryNavigation = [
 
 export const secondaryNavigation = {
   workspace: [
+    { key: "holdings", label: "持仓管理", icon: "experiment" },
     { key: "dashboard", label: "市场概览", icon: "dashboard" },
   ],
   strategy: [

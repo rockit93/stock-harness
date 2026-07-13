@@ -31,6 +31,15 @@ class BarInterval(str, Enum):
     MONTH = "1mo"
 
 
+INTRADAY_BAR_INTERVALS = {
+    BarInterval.MIN_1,
+    BarInterval.MIN_15,
+    BarInterval.MIN_30,
+    BarInterval.HOUR_1,
+    BarInterval.HOUR_4,
+}
+
+
 _BAR_CACHE_MAX_ENTRIES = 256
 _BAR_CACHE_TTL_SECONDS = {
     BarInterval.MIN_1: 30,
@@ -295,7 +304,7 @@ def _load_futu_bars(
     interval: BarInterval,
 ) -> pd.DataFrame:
     try:
-        from futu import KLType, OpenQuoteContext, RET_OK
+        from futu import KLType, OpenQuoteContext, RET_OK, SubType
     except ImportError as exc:
         raise RuntimeError("未安装 futu-api。请运行 pip install futu-api 后重试。") from exc
 
@@ -329,6 +338,30 @@ def _load_futu_bars(
             frames.append(data)
             if not page_req_key:
                 break
+
+        # request_history_kline is the durable history source, but its last bar
+        # can lag during an active session. Merge the current subscribed bars so
+        # intraday workspaces include today's in-progress candle as well.
+        subtype = {
+            BarInterval.MIN_1: SubType.K_1M,
+            BarInterval.MIN_15: SubType.K_15M,
+            BarInterval.MIN_30: SubType.K_30M,
+            BarInterval.HOUR_1: SubType.K_60M,
+            BarInterval.HOUR_4: SubType.K_60M,
+            BarInterval.DAY: SubType.K_DAY,
+            BarInterval.WEEK: SubType.K_WEEK,
+            BarInterval.MONTH: SubType.K_MON,
+        }[interval]
+        subscribe_ret, _ = quote_ctx.subscribe([code], [subtype], is_first_push=False)
+        if subscribe_ret == RET_OK:
+            current_ret, current = quote_ctx.get_cur_kline(
+                code=code,
+                num=1000 if interval == BarInterval.HOUR_4 else 200,
+                ktype=ktype,
+                autype=_futu_adjust(adjust),
+            )
+            if current_ret == RET_OK and current is not None and not current.empty:
+                frames.append(current)
     finally:
         quote_ctx.close()
 
@@ -338,30 +371,51 @@ def _load_futu_bars(
 
     raw = raw.rename(columns={"time_key": "date"})
     raw["date"] = pd.to_datetime(raw["date"])
-    raw = raw.set_index("date")
+    raw = raw.drop_duplicates(subset=["date"], keep="last").sort_values("date").set_index("date")
     return _normalize_ohlcv(raw)
 
 
-def _tushare_code(symbol: str) -> str:
-    clean = normalize_symbol(Market.A_SHARE, symbol)
-    suffix = "SH" if clean.startswith(("5", "6", "9")) else "BJ" if clean.startswith(("4", "8")) else "SZ"
-    return f"{clean}.{suffix}"
+def _tushare_code(market: Market, symbol: str) -> str:
+    clean = normalize_symbol(market, symbol)
+    if market == Market.A_SHARE:
+        suffix = "SH" if clean.startswith(("5", "6", "9")) else "BJ" if clean.startswith(("4", "8")) else "SZ"
+        return f"{clean}.{suffix}"
+    if market == Market.HK:
+        return f"{clean.zfill(5)}.HK"
+    if market == Market.US:
+        return clean
+    raise ValueError(f"Unsupported Tushare market: {market.value}")
 
 
-def _load_tushare(symbol: str, start: date, end: date, adjust: str, token: str) -> pd.DataFrame:
+def _load_tushare(market: Market, symbol: str, start: date, end: date, adjust: str, token: str) -> pd.DataFrame:
     if not token.strip():
         raise RuntimeError("Tushare Token 未配置，请先在数据源管理中配置。")
     try:
         import tushare as ts
     except ImportError as exc:
         raise RuntimeError("未安装 tushare，请运行 pip install tushare 后重试。") from exc
-    raw = ts.pro_bar(
-        api=ts.pro_api(token.strip()), ts_code=_tushare_code(symbol),
-        start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
-        adj=adjust if adjust in {"qfq", "hfq"} else None,
-    )
+    pro = ts.pro_api(token.strip())
+    ts_code = _tushare_code(market, symbol)
+    query = {"ts_code": ts_code, "start_date": start.strftime("%Y%m%d"), "end_date": end.strftime("%Y%m%d")}
+    if market == Market.A_SHARE:
+        raw = ts.pro_bar(api=pro, **query, adj=adjust if adjust in {"qfq", "hfq"} else None)
+    else:
+        if market == Market.HK:
+            endpoint = pro.hk_daily_adj if adjust in {"qfq", "hfq"} else pro.hk_daily
+        else:
+            endpoint = pro.us_daily_adj if adjust in {"qfq", "hfq"} else pro.us_daily
+        raw = endpoint(**query)
+        if raw is not None and not raw.empty and adjust in {"qfq", "hfq"} and "adj_factor" in raw.columns:
+            factors = pd.to_numeric(raw["adj_factor"], errors="coerce")
+            if adjust == "hfq":
+                chronological = raw.assign(_factor=factors).sort_values("trade_date")
+                valid_factors = chronological["_factor"].dropna()
+                factors = factors / (valid_factors.iloc[0] if not valid_factors.empty else 1.0)
+            for column in ("open", "high", "low", "close", "pre_close"):
+                if column in raw.columns:
+                    raw[column] = pd.to_numeric(raw[column], errors="coerce") * factors
     if raw is None or raw.empty:
-        raise RuntimeError(f"Tushare 未返回 {_tushare_code(symbol)} 的行情数据，请检查 Token 权限和日期范围。")
+        raise RuntimeError(f"Tushare 未返回 {ts_code} 的 {market.value} 行情数据，请检查 Token 权限和日期范围。")
     # Tushare Pro uses `vol` for volume while AlphaDock's provider-neutral
     # schema uses `volume`. Keep this translation at the adapter boundary.
     raw = raw.rename(columns={"vol": "volume"})
@@ -424,14 +478,14 @@ def _load_auto_daily(market: Market, symbol: str, start: date, end: date, adjust
 
 DEFAULT_PROVIDER_CHAINS: dict[Market, list[str]] = {
     Market.A_SHARE: ["akshare", "tushare", "baostock", "yfinance"],
-    Market.HK: ["futu", "akshare", "yfinance"],
-    Market.US: ["futu", "yfinance", "akshare"],
+    Market.HK: ["futu", "akshare", "tushare", "yfinance"],
+    Market.US: ["futu", "tushare", "yfinance", "akshare"],
 }
 
 SUPPORTED_BAR_PROVIDERS: dict[Market, set[str]] = {
     Market.A_SHARE: {"akshare", "tushare", "baostock", "futu", "yfinance"},
-    Market.HK: {"akshare", "futu", "yfinance"},
-    Market.US: {"akshare", "futu", "yfinance"},
+    Market.HK: {"akshare", "tushare", "futu", "yfinance"},
+    Market.US: {"akshare", "tushare", "futu", "yfinance"},
 }
 
 
@@ -451,8 +505,8 @@ def _load_provider_bars(provider: str, market: Market, symbol: str, start: date,
         raise RuntimeError(f"{provider} 当前只支持日线。")
     if provider == "baostock" and market == Market.A_SHARE:
         return _load_baostock(symbol, start, end, adjust)
-    if provider == "tushare" and market == Market.A_SHARE:
-        return _load_tushare(symbol, start, end, adjust, tushare_token)
+    if provider == "tushare":
+        return _load_tushare(market, symbol, start, end, adjust, tushare_token)
     if provider == "akshare":
         if market == Market.A_SHARE:
             return _load_a_share(symbol, start, end, adjust)
@@ -468,6 +522,16 @@ def _load_provider_bars(provider: str, market: Market, symbol: str, start: date,
 
 def _load_from_chain(market: Market, symbol: str, start: date, end: date, adjust: str,
                      host: str, port: int, interval: BarInterval, providers: list[str], tushare_token: str = "") -> pd.DataFrame:
+    if interval in INTRADAY_BAR_INTERVALS:
+        # Built-in daily providers cannot serve minute/hour bars. Futu may stay
+        # anywhere in the user's fallback chain; select it only when needed.
+        providers = [provider for provider in providers if provider == "futu"]
+        if not providers:
+            raise RuntimeError(
+                f"{interval.value} 分钟/小时 K 线需要支持盘中周期的数据源。"
+                f"请在 {market.value} 行情路由中添加 Futu OpenD，或改用日线、周线、月线。"
+            )
+
     errors = []
     for provider in providers:
         try:
@@ -493,6 +557,11 @@ def _load_from_chain(market: Market, symbol: str, start: date, end: date, adjust
             return frame
         except Exception as exc:
             errors.append(f"{provider}: {exc}")
+    if interval in INTRADAY_BAR_INTERVALS:
+        raise RuntimeError(
+            f"{interval.value} 分钟/小时 K 线的数据源不可用。"
+            f"请确认 Futu OpenD 已启动且当前账号具有该市场行情权限。原始错误: {' | '.join(errors)}"
+        )
     raise RuntimeError(f"{market.value} 主备数据源全部不可用: {' | '.join(errors)}")
 
 

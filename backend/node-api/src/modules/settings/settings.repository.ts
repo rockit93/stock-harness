@@ -546,13 +546,13 @@ export class SettingsRepository {
     const input = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
     const allowed: Record<string, string[]> = {
       "A Share": ["akshare", "tushare", "baostock", "futu", "yfinance"],
-      "Hong Kong": ["futu", "akshare", "yfinance"],
-      US: ["sec_edgar", "futu", "yfinance", "akshare"],
+      "Hong Kong": ["futu", "akshare", "tushare", "yfinance"],
+      US: ["sec_edgar", "futu", "tushare", "yfinance", "akshare"],
     };
     const defaults: DataSourceSettings["providerChains"] = {
       "A Share": ["akshare", "baostock", "yfinance"],
-      "Hong Kong": ["futu", "akshare", "yfinance"],
-      US: ["sec_edgar", "futu", "yfinance"],
+      "Hong Kong": ["futu", "akshare", "tushare", "yfinance"],
+      US: ["sec_edgar", "futu", "tushare", "yfinance"],
     };
     for (const market of Object.keys(defaults) as Array<keyof typeof defaults>) {
       const items = Array.isArray(input[market]) ? input[market] as unknown[] : defaults[market];

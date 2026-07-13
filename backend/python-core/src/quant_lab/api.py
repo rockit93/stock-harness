@@ -141,7 +141,8 @@ def bars(request: BarsRequest) -> dict[str, Any]:
 
     provider = frame.attrs.get("provider", "unknown")
     if request.range and not frame.empty:
-        last_trading_day = frame.index.max().normalize()
+        last_bar_time = frame.index.max()
+        last_trading_day = last_bar_time.normalize()
         if request.range == "day":
             range_start = last_trading_day
         else:
@@ -152,7 +153,9 @@ def bars(request: BarsRequest) -> dict[str, Any]:
                 "year": pd.DateOffset(years=1),
             }[request.range]
             range_start = last_trading_day - offset
-        frame = frame.loc[(frame.index >= range_start) & (frame.index <= last_trading_day)]
+        # Keep every intraday bar on the last trading day. Using midnight as
+        # the upper bound discarded all minute/hour bars.
+        frame = frame.loc[(frame.index >= range_start) & (frame.index <= last_bar_time)]
 
     return {
         "bars": _frame_payload(frame),

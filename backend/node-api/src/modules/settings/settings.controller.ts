@@ -191,11 +191,23 @@ export class SettingsController {
     const payload = await response.json().catch(() => ({})) as any;
     if (!response.ok) throw new BadGatewayException(payload.error ?? "无法读取 Ollama 模型列表");
     const states = new Map(this.settings.privateModelStates().map((item) => [item.model, item]));
+    const installedModels = Array.isArray(payload.models) ? payload.models : [];
+    const capabilities = await Promise.all(installedModels.map(async (item: any) => {
+      try {
+        const showResponse = await fetch(`${baseUrl.replace(/\/$/, "")}/api/show`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: String(item.name || "") }), signal: AbortSignal.timeout(10_000),
+        });
+        const showPayload = await showResponse.json().catch(() => ({})) as any;
+        return new Set(Array.isArray(showPayload.capabilities) ? showPayload.capabilities.map(String) : []);
+      } catch { return new Set<string>(); }
+    }));
     return {
       isAdmin: req.user.role === "admin",
       baseUrl,
-      models: (Array.isArray(payload.models) ? payload.models : []).map((item: any) => ({
+      models: installedModels.map((item: any, index: number) => ({
         model: String(item.name || ""), size: Number(item.size || 0), modifiedAt: item.modified_at || null,
+        supportsVision: capabilities[index].has("vision"),
         enabled: states.get(String(item.name || "")) ? Boolean(states.get(String(item.name || ""))!.enabled) : true,
         baseUrl: states.get(String(item.name || ""))?.base_url || baseUrl,
       })).filter((item: any) => item.model),
